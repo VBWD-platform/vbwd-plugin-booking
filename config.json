@@ -1,0 +1,14 @@
+{
+  "booking": {
+    "default_timezone": "Europe/Berlin",
+    "max_advance_booking_days": 90,
+    "min_lead_time_hours": 1,
+    "cancellation_grace_period_hours": 24,
+    "default_confirmation_mode": "auto",
+    "default_slot_duration_minutes": 60,
+    "default_buffer_minutes": 15,
+    "invoice_prefix": "BK",
+    "enable_recurring_bookings": false,
+    "max_bookings_per_user_per_day": 5
+  }
+}
