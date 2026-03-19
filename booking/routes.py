@@ -405,3 +405,201 @@ def admin_dashboard():
             "upcoming": upcoming_count,
         }
     )
+
+
+# ── Export / Import routes ────────────────────────────────────────────────────
+
+
+def _export_service():
+    from plugins.booking.booking.services.export_service import ExportService
+
+    return ExportService(
+        category_repository=ResourceCategoryRepository(db.session),
+        resource_repository=ResourceRepository(db.session),
+        booking_repository=BookingRepository(db.session),
+    )
+
+
+def _import_service():
+    from plugins.booking.booking.services.import_service import ImportService
+
+    return ImportService(
+        category_repository=ResourceCategoryRepository(db.session),
+        resource_repository=ResourceRepository(db.session),
+    )
+
+
+def _export_rule_repo():
+    from plugins.booking.booking.repositories.export_rule_repository import (
+        ExportRuleRepository,
+    )
+
+    return ExportRuleRepository(db.session)
+
+
+@booking_bp.route("/api/v1/admin/booking/export/<entity>", methods=["GET"])
+@require_admin
+def admin_export(entity):
+    export_format = request.args.get("format", "csv")
+    service = _export_service()
+
+    if entity == "categories":
+        data = service.export_categories(export_format)
+    elif entity == "resources":
+        data = service.export_resources(export_format)
+    elif entity == "bookings":
+        date_from = request.args.get("date_from")
+        date_to = request.args.get("date_to")
+        status = request.args.get("status")
+        data = service.export_bookings(
+            export_format,
+            date.fromisoformat(date_from) if date_from else None,
+            date.fromisoformat(date_to) if date_to else None,
+            status,
+        )
+    else:
+        return jsonify({"error": f"Unknown entity: {entity}"}), 400
+
+    content_type = "application/json" if export_format == "json" else "text/csv"
+    ext = "json" if export_format == "json" else "csv"
+    filename = f"{entity}_{date.today().isoformat()}.{ext}"
+
+    return (
+        data,
+        200,
+        {
+            "Content-Type": content_type,
+            "Content-Disposition": f"attachment; filename={filename}",
+        },
+    )
+
+
+@booking_bp.route("/api/v1/admin/booking/import/<entity>", methods=["POST"])
+@require_admin
+def admin_import(entity):
+    if "file" not in request.files:
+        return jsonify({"error": "file upload required"}), 400
+
+    uploaded_file = request.files["file"]
+    file_content = uploaded_file.read().decode("utf-8")
+    import_format = "json" if uploaded_file.filename.endswith(".json") else "csv"
+
+    service = _import_service()
+    if entity == "categories":
+        result = service.import_categories(file_content, import_format)
+    elif entity == "resources":
+        result = service.import_resources(file_content, import_format)
+    else:
+        return jsonify({"error": f"Import not supported for: {entity}"}), 400
+
+    db.session.commit()
+    return jsonify(result)
+
+
+# ── Export Rules CRUD ─────────────────────────────────────────────────────────
+
+
+@booking_bp.route("/api/v1/admin/booking/export-rules", methods=["GET"])
+@require_admin
+def admin_list_export_rules():
+    rules = _export_rule_repo().find_all()
+    return jsonify({"rules": [rule.to_dict() for rule in rules]})
+
+
+@booking_bp.route("/api/v1/admin/booking/export-rules", methods=["POST"])
+@require_admin
+def admin_create_export_rule():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+
+    from plugins.booking.booking.models.export_rule import BookingExportRule
+
+    rule = BookingExportRule()
+    rule.name = data["name"]
+    rule.trigger_type = data["trigger_type"]
+    rule.event_type = data.get("event_type")
+    rule.cron_expression = data.get("cron_expression")
+    rule.cron_export_scope = data.get("cron_export_scope")
+    rule.cron_entity = data.get("cron_entity")
+    rule.cron_status_filter = data.get("cron_status_filter")
+    rule.export_type = data["export_type"]
+    rule.config = data.get("config", {})
+    rule.is_active = data.get("is_active", True)
+
+    _export_rule_repo().save(rule)
+    db.session.commit()
+    return jsonify(rule.to_dict()), 201
+
+
+@booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["PUT"])
+@require_admin
+def admin_update_export_rule(rule_id):
+    rule = _export_rule_repo().find_by_id(rule_id)
+    if not rule:
+        return jsonify({"error": "Export rule not found"}), 404
+
+    data = request.get_json()
+    for field in [
+        "name",
+        "trigger_type",
+        "event_type",
+        "cron_expression",
+        "cron_export_scope",
+        "cron_entity",
+        "cron_status_filter",
+        "export_type",
+        "config",
+        "is_active",
+    ]:
+        if field in data:
+            setattr(rule, field, data[field])
+
+    db.session.commit()
+    return jsonify(rule.to_dict())
+
+
+@booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["DELETE"])
+@require_admin
+def admin_delete_export_rule(rule_id):
+    rule = _export_rule_repo().find_by_id(rule_id)
+    if not rule:
+        return jsonify({"error": "Export rule not found"}), 404
+    _export_rule_repo().delete(rule)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>/test", methods=["POST"])
+@require_admin
+def admin_test_export_rule(rule_id):
+    rule = _export_rule_repo().find_by_id(rule_id)
+    if not rule:
+        return jsonify({"error": "Export rule not found"}), 404
+
+    from plugins.booking.booking.services.export_rule_service import (
+        ExportRuleService,
+    )
+
+    sample_data = {
+        "event": rule.event_type or "booking.test",
+        "timestamp": datetime.utcnow().isoformat(),
+        "booking_id": "test-booking-id",
+        "resource_name": "Test Resource",
+        "user_email": "test@example.com",
+        "start_at": datetime.utcnow().isoformat(),
+        "amount": "50.00",
+        "status": "confirmed",
+    }
+
+    service = ExportRuleService(_export_rule_repo())
+    service.execute_rule(rule, sample_data)
+    db.session.commit()
+
+    return jsonify(
+        {
+            "tested": True,
+            "last_status": rule.last_status,
+            "last_error": rule.last_error,
+        }
+    )
