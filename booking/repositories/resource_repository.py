@@ -16,17 +16,10 @@ class ResourceRepository:
         return self.session.get(BookableResource, resource_id)
 
     def find_by_slug(self, slug):
-        return (
-            self.session.query(BookableResource)
-            .filter_by(slug=slug)
-            .first()
-        )
+        return self.session.query(BookableResource).filter_by(slug=slug).first()
 
     def find_by_category(self, category_slug, active_only=True):
-        query = (
-            self.session.query(BookableResource)
-            .join(BookableResource.categories)
-        )
+        query = self.session.query(BookableResource).join(BookableResource.categories)
         from plugins.booking.booking.models.resource_category import (
             BookableResourceCategory,
         )

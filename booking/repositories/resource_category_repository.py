@@ -16,11 +16,7 @@ class ResourceCategoryRepository:
         return self.session.get(BookableResourceCategory, category_id)
 
     def find_by_slug(self, slug):
-        return (
-            self.session.query(BookableResourceCategory)
-            .filter_by(slug=slug)
-            .first()
-        )
+        return self.session.query(BookableResourceCategory).filter_by(slug=slug).first()
 
     def save(self, category):
         self.session.add(category)

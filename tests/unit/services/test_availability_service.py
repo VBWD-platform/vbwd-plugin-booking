@@ -22,7 +22,8 @@ def _make_resource(
     resource.slot_duration_minutes = slot_duration_minutes
     resource.capacity = capacity
     resource.availability = {
-        "schedule": schedule or {
+        "schedule": schedule
+        or {
             "mon": [{"start": "09:00", "end": "12:00"}],
             "tue": [{"start": "09:00", "end": "12:00"}],
             "wed": [{"start": "09:00", "end": "12:00"}],
@@ -50,9 +51,13 @@ class TestAvailabilityServiceSlots:
 
         # Monday with 09:00-12:00 and 30min slots = 6 slots
         resource = _make_resource(slot_duration_minutes=30)
-        target = date.today() + timedelta(days=(7 - date.today().weekday()))  # next Monday
+        target = date.today() + timedelta(
+            days=(7 - date.today().weekday())
+        )  # next Monday
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -75,7 +80,9 @@ class TestAvailabilityServiceSlots:
         resource = _make_resource(slot_duration_minutes=30, capacity=1)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -94,7 +101,9 @@ class TestAvailabilityServiceSlots:
         resource = _make_resource(slot_duration_minutes=60, capacity=20)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -114,7 +123,9 @@ class TestAvailabilityServiceSlots:
         resource = _make_resource(slot_duration_minutes=30, buffer_minutes=15)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -137,7 +148,9 @@ class TestAvailabilityServiceSlots:
             days_until_saturday = 7
         target = today + timedelta(days=days_until_saturday)
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -153,10 +166,14 @@ class TestAvailabilityServiceSlots:
 
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
         resource = _make_resource(
-            exceptions=[{"date": target.isoformat(), "closed": True, "reason": "Holiday"}]
+            exceptions=[
+                {"date": target.isoformat(), "closed": True, "reason": "Holiday"}
+            ]
         )
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -174,7 +191,9 @@ class TestAvailabilityServiceSlots:
         resource = _make_resource(slot_duration_minutes=30, capacity=1)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -216,7 +235,9 @@ class TestAvailabilityServiceFlexible:
         resource = _make_resource(slot_duration_minutes=None, capacity=5)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime
@@ -235,7 +256,9 @@ class TestAvailabilityServiceFlexible:
         resource = _make_resource(slot_duration_minutes=None, capacity=5)
         target = date.today() + timedelta(days=(7 - date.today().weekday()))
 
-        with patch("plugins.booking.booking.services.availability_service.datetime") as mock_dt:
+        with patch(
+            "plugins.booking.booking.services.availability_service.datetime"
+        ) as mock_dt:
             mock_dt.utcnow.return_value = datetime(2026, 1, 1)
             mock_dt.combine = datetime.combine
             mock_dt.strptime = datetime.strptime

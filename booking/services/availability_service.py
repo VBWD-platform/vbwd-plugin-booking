@@ -54,7 +54,9 @@ class AvailabilityService:
                 exception_slots = exception["slots"]
                 break
 
-        time_windows = exception_slots if exception_slots else schedule.get(weekday_name, [])
+        time_windows = (
+            exception_slots if exception_slots else schedule.get(weekday_name, [])
+        )
 
         if not time_windows:
             return []
@@ -71,7 +73,9 @@ class AvailabilityService:
 
         for window in time_windows:
             window_start_time = self._parse_time(window["start"])
-            window_end_dt = datetime.combine(reference_date, self._parse_time(window["end"]))
+            window_end_dt = datetime.combine(
+                reference_date, self._parse_time(window["end"])
+            )
             current_dt = datetime.combine(reference_date, window_start_time)
 
             while current_dt + slot_duration <= window_end_dt:
@@ -89,11 +93,13 @@ class AvailabilityService:
                 available_capacity = resource.capacity - booked_count
 
                 if available_capacity > 0:
-                    slots.append({
-                        "start": current_dt.strftime("%H:%M"),
-                        "end": slot_end_dt.strftime("%H:%M"),
-                        "available_capacity": available_capacity,
-                    })
+                    slots.append(
+                        {
+                            "start": current_dt.strftime("%H:%M"),
+                            "end": slot_end_dt.strftime("%H:%M"),
+                            "available_capacity": available_capacity,
+                        }
+                    )
 
                 current_dt += slot_duration + buffer
 
@@ -108,10 +114,12 @@ class AvailabilityService:
         )
         available_capacity = resource.capacity - booked_count
         if available_capacity > 0:
-            return [{
-                "date": target_date.isoformat(),
-                "available_capacity": available_capacity,
-            }]
+            return [
+                {
+                    "date": target_date.isoformat(),
+                    "available_capacity": available_capacity,
+                }
+            ]
         return []
 
     @staticmethod

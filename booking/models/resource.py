@@ -49,6 +49,13 @@ class BookableResource(BaseModel):
         lazy="selectin",
     )
 
+    def _serialize_categories(self) -> list:
+        categories = list(self.categories)  # type: ignore[call-overload]
+        return [
+            {"id": str(cat.id), "name": cat.name, "slug": cat.slug}
+            for cat in categories
+        ]
+
     def to_dict(self) -> dict:
         return {
             "id": str(self.id),
@@ -67,10 +74,7 @@ class BookableResource(BaseModel):
             "config": self.config or {},
             "is_active": self.is_active,
             "sort_order": self.sort_order,
-            "categories": [
-                {"id": str(category.id), "name": category.name, "slug": category.slug}
-                for category in (self.categories or [])
-            ],
+            "categories": self._serialize_categories(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

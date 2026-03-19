@@ -76,7 +76,12 @@ class TestBookableResource:
         resource.price = Decimal("75.00")
         resource.custom_fields_schema = [
             {"id": "symptoms", "label": "Symptoms", "type": "text", "required": True},
-            {"id": "insurance", "label": "Insurance ID", "type": "string", "required": False},
+            {
+                "id": "insurance",
+                "label": "Insurance ID",
+                "type": "string",
+                "required": False,
+            },
         ]
 
         assert len(resource.custom_fields_schema) == 2
