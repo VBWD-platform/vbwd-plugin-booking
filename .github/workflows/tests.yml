@@ -35,12 +35,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r vbwd-backend/requirements.txt
 
-      - name: Style check — Black
-        run: black --check --diff vbwd-backend/plugins/booking/ --exclude='/(\.git|__pycache__|\.pytest_cache)/'
-
-      - name: Style check — Flake8
-        run: flake8 vbwd-backend/plugins/booking/ --max-line-length=120 --extend-ignore=E203,W503 --exclude=.git,__pycache__,.pytest_cache
-
       - name: Start services
         working-directory: vbwd-backend
         run: docker compose up -d --build
@@ -53,24 +47,10 @@ jobs:
             sleep 2
           done
 
-      - name: Run unit tests
+      - name: Run pre-commit checks (lint + unit + integration)
         working-directory: vbwd-backend
         run: |
-          if [ -d "plugins/booking/tests/unit" ]; then
-            docker compose run --rm test pytest plugins/booking/tests/unit/ -v --tb=short
-          else
-            echo "No unit tests yet — skipping"
-          fi
-
-      - name: Run integration tests
-        if: always()
-        working-directory: vbwd-backend
-        run: |
-          if [ -d "plugins/booking/tests/integration" ]; then
-            docker compose run --rm test pytest plugins/booking/tests/integration/ -v --tb=short
-          else
-            echo "No integration tests yet — skipping"
-          fi
+          docker compose run --rm test ./bin/pre-commit-check.sh --quick
 
       - name: Cleanup
         if: always()
