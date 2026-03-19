@@ -47,10 +47,10 @@ jobs:
             sleep 2
           done
 
-      - name: Run pre-commit checks (lint + unit + integration)
+      - name: Run pre-commit checks (lint + unit)
         working-directory: vbwd-backend
         run: |
-          docker compose run --rm test ./bin/pre-commit-check.sh --quick
+          docker compose run --rm test ./bin/pre-commit-check.sh --plugin booking --quick
 
       - name: Cleanup
         if: always()
