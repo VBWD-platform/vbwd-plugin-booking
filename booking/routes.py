@@ -11,6 +11,9 @@ from plugins.booking.booking.repositories.resource_category_repository import (
 from plugins.booking.booking.repositories.resource_repository import (
     ResourceRepository,
 )
+from plugins.booking.booking.repositories.resource_type_repository import (
+    ResourceTypeRepository,
+)
 from plugins.booking.booking.repositories.booking_repository import (
     BookingRepository,
 )
@@ -46,6 +49,10 @@ def _resource_repo() -> ResourceRepository:
 
 def _category_repo() -> ResourceCategoryRepository:
     return ResourceCategoryRepository(db.session)
+
+
+def _type_repo() -> ResourceTypeRepository:
+    return ResourceTypeRepository(db.session)
 
 
 def _availability_service() -> AvailabilityService:
@@ -171,6 +178,7 @@ def cancel_booking(booking_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/categories", methods=["GET"])
+@require_auth
 @require_admin
 def admin_list_categories():
     categories = _category_repo().find_all(active_only=False)
@@ -178,6 +186,7 @@ def admin_list_categories():
 
 
 @booking_bp.route("/api/v1/admin/booking/categories", methods=["POST"])
+@require_auth
 @require_admin
 def admin_create_category():
     data = request.get_json()
@@ -204,6 +213,7 @@ def admin_create_category():
 
 
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["PUT"])
+@require_auth
 @require_admin
 def admin_update_category(category_id):
     category = _category_repo().find_by_id(category_id)
@@ -229,6 +239,7 @@ def admin_update_category(category_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["DELETE"])
+@require_auth
 @require_admin
 def admin_delete_category(category_id):
     category = _category_repo().find_by_id(category_id)
@@ -239,14 +250,100 @@ def admin_delete_category(category_id):
     return jsonify({"deleted": True})
 
 
+# ── Resource Type admin routes ────────────────────────────────────────────────
+
+
+@booking_bp.route("/api/v1/admin/booking/resource-types", methods=["GET"])
+@require_auth
+@require_admin
+def admin_list_resource_types():
+    resource_types = _type_repo().find_all(active_only=False)
+    return jsonify(
+        {"resource_types": [resource_type.to_dict() for resource_type in resource_types]}
+    )
+
+
+@booking_bp.route("/api/v1/admin/booking/resource-types", methods=["POST"])
+@require_auth
+@require_admin
+def admin_create_resource_type():
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("slug"):
+        return jsonify({"error": "name and slug required"}), 400
+
+    from plugins.booking.booking.models.resource_type import BookableResourceType
+
+    resource_type = BookableResourceType()
+    resource_type.name = data["name"]
+    resource_type.slug = data["slug"]
+    resource_type.sort_order = data.get("sort_order", 0)
+    resource_type.is_active = data.get("is_active", True)
+
+    _type_repo().save(resource_type)
+    db.session.commit()
+    return jsonify(resource_type.to_dict()), 201
+
+
+@booking_bp.route("/api/v1/admin/booking/resource-types/<type_id>", methods=["PUT"])
+@require_auth
+@require_admin
+def admin_update_resource_type(type_id):
+    resource_type = _type_repo().find_by_id(type_id)
+    if not resource_type:
+        return jsonify({"error": "Resource type not found"}), 404
+
+    data = request.get_json()
+    for field in ["name", "slug", "sort_order", "is_active"]:
+        if field in data:
+            setattr(resource_type, field, data[field])
+
+    db.session.commit()
+    return jsonify(resource_type.to_dict())
+
+
+@booking_bp.route("/api/v1/admin/booking/resource-types/<type_id>", methods=["DELETE"])
+@require_auth
+@require_admin
+def admin_delete_resource_type(type_id):
+    resource_type = _type_repo().find_by_id(type_id)
+    if not resource_type:
+        return jsonify({"error": "Resource type not found"}), 404
+    _type_repo().delete(resource_type)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+# ── Public resource types route ──────────────────────────────────────────────
+
+
+@booking_bp.route("/api/v1/booking/resource-types", methods=["GET"])
+def list_resource_types():
+    resource_types = _type_repo().find_all(active_only=True)
+    return jsonify(
+        {"resource_types": [resource_type.to_dict() for resource_type in resource_types]}
+    )
+
+
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["GET"])
+@require_auth
 @require_admin
 def admin_list_resources():
     resources = _resource_repo().find_all(active_only=False)
     return jsonify({"resources": [resource.to_dict() for resource in resources]})
 
 
+@booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["GET"])
+@require_auth
+@require_admin
+def admin_get_resource(resource_id):
+    resource = _resource_repo().find_by_id(resource_id)
+    if not resource:
+        return jsonify({"error": "Resource not found"}), 404
+    return jsonify(resource.to_dict())
+
+
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["POST"])
+@require_auth
 @require_admin
 def admin_create_resource():
     data = request.get_json()
@@ -286,6 +383,7 @@ def admin_create_resource():
 
 
 @booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["PUT"])
+@require_auth
 @require_admin
 def admin_update_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
@@ -319,6 +417,7 @@ def admin_update_resource(resource_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["DELETE"])
+@require_auth
 @require_admin
 def admin_delete_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
@@ -330,6 +429,7 @@ def admin_delete_resource(resource_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/bookings", methods=["GET"])
+@require_auth
 @require_admin
 def admin_list_bookings():
     from plugins.booking.booking.models.booking import Booking
@@ -349,6 +449,7 @@ def admin_list_bookings():
 
 
 @booking_bp.route("/api/v1/admin/booking/bookings/<booking_id>", methods=["GET"])
+@require_auth
 @require_admin
 def admin_get_booking(booking_id):
     booking = _booking_service().get_booking(booking_id)
@@ -358,6 +459,7 @@ def admin_get_booking(booking_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/bookings/<booking_id>", methods=["PUT"])
+@require_auth
 @require_admin
 def admin_update_booking(booking_id):
     booking = _booking_service().get_booking(booking_id)
@@ -375,6 +477,7 @@ def admin_update_booking(booking_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/dashboard", methods=["GET"])
+@require_auth
 @require_admin
 def admin_dashboard():
     from plugins.booking.booking.models.booking import Booking
@@ -438,6 +541,7 @@ def _export_rule_repo():
 
 
 @booking_bp.route("/api/v1/admin/booking/export/<entity>", methods=["GET"])
+@require_auth
 @require_admin
 def admin_export(entity):
     export_format = request.args.get("format", "csv")
@@ -475,6 +579,7 @@ def admin_export(entity):
 
 
 @booking_bp.route("/api/v1/admin/booking/import/<entity>", methods=["POST"])
+@require_auth
 @require_admin
 def admin_import(entity):
     if "file" not in request.files:
@@ -500,6 +605,7 @@ def admin_import(entity):
 
 
 @booking_bp.route("/api/v1/admin/booking/export-rules", methods=["GET"])
+@require_auth
 @require_admin
 def admin_list_export_rules():
     rules = _export_rule_repo().find_all()
@@ -507,6 +613,7 @@ def admin_list_export_rules():
 
 
 @booking_bp.route("/api/v1/admin/booking/export-rules", methods=["POST"])
+@require_auth
 @require_admin
 def admin_create_export_rule():
     data = request.get_json()
@@ -533,6 +640,7 @@ def admin_create_export_rule():
 
 
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["PUT"])
+@require_auth
 @require_admin
 def admin_update_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)
@@ -560,6 +668,7 @@ def admin_update_export_rule(rule_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["DELETE"])
+@require_auth
 @require_admin
 def admin_delete_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)
@@ -571,6 +680,7 @@ def admin_delete_export_rule(rule_id):
 
 
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>/test", methods=["POST"])
+@require_auth
 @require_admin
 def admin_test_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)

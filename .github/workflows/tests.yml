@@ -9,7 +9,7 @@ on:
 
 jobs:
   ci:
-    name: CI — booking
+    name: CI — booking (lint + unit)
     runs-on: ubuntu-latest
 
     steps:
@@ -35,22 +35,192 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r vbwd-backend/requirements.txt
 
+      - name: Style check — Black
+        run: black --check --diff vbwd-backend/plugins/booking/ --exclude='/(\.git|__pycache__|\.pytest_cache)/'
+
+      - name: Style check — Flake8
+        run: flake8 vbwd-backend/plugins/booking/ --max-line-length=120 --extend-ignore=E203,W503 --exclude=.git,__pycache__,.pytest_cache
+
+      - name: Style check — Mypy
+        run: mypy vbwd-backend/plugins/booking/booking/ --ignore-missing-imports --no-error-summary --python-version=3.11 || true
+
       - name: Start services
         working-directory: vbwd-backend
         run: docker compose up -d --build
 
       - name: Wait for API
-        working-directory: vbwd-backend
         run: |
           for i in $(seq 1 30); do
             curl -sf http://localhost:5000/api/v1/health > /dev/null 2>&1 && break
             sleep 2
           done
+          curl -sf http://localhost:5000/api/v1/health || exit 1
 
-      - name: Run pre-commit checks (lint + unit)
+      - name: Run unit tests
         working-directory: vbwd-backend
         run: |
-          docker compose run --rm test ./bin/pre-commit-check.sh --plugin booking --quick
+          if [ -d "plugins/booking/tests/unit" ]; then
+            docker compose run --rm test pytest plugins/booking/tests/unit/ -v --tb=short
+          else
+            echo "No unit tests yet"
+          fi
+
+      - name: Cleanup
+        if: always()
+        working-directory: vbwd-backend
+        run: docker compose down -v
+
+  integration:
+    name: Integration — booking
+    needs: ci
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone vbwd-backend
+        uses: actions/checkout@v4
+        with:
+          repository: VBWD-platform/vbwd-backend
+          ref: main
+          path: vbwd-backend
+
+      - name: Clone plugin
+        uses: actions/checkout@v4
+        with:
+          path: vbwd-backend/plugins/booking
+
+      - name: Start services
+        working-directory: vbwd-backend
+        run: docker compose up -d --build
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5000/api/v1/health > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -sf http://localhost:5000/api/v1/health || exit 1
+
+      - name: Seed test data
+        working-directory: vbwd-backend
+        run: docker compose exec -T api flask seed-test-data || true
+
+      - name: Run integration tests
+        working-directory: vbwd-backend
+        run: |
+          if [ -d "plugins/booking/tests/integration" ]; then
+            docker compose run --rm test pytest plugins/booking/tests/integration/ -v --tb=short
+          else
+            echo "No integration tests yet — skipping"
+          fi
+
+      - name: Cleanup
+        if: always()
+        working-directory: vbwd-backend
+        run: docker compose down -v
+
+  e2e:
+    name: E2E — booking (Playwright)
+    needs: integration
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Backend ────────────────────────────────────────────────────────
+      - name: Clone vbwd-backend
+        uses: actions/checkout@v4
+        with:
+          repository: VBWD-platform/vbwd-backend
+          ref: main
+          path: vbwd-backend
+
+      - name: Clone backend booking plugin
+        uses: actions/checkout@v4
+        with:
+          path: vbwd-backend/plugins/booking
+
+      - name: Start backend services
+        working-directory: vbwd-backend
+        run: docker compose up -d --build
+
+      - name: Wait for backend API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5000/api/v1/health > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -sf http://localhost:5000/api/v1/health || exit 1
+
+      - name: Seed test data
+        working-directory: vbwd-backend
+        run: docker compose exec -T api flask seed-test-data || true
+
+      # ── Frontend ───────────────────────────────────────────────────────
+      - name: Clone vbwd-fe-admin
+        uses: actions/checkout@v4
+        with:
+          repository: VBWD-platform/vbwd-fe-admin
+          ref: main
+          path: vbwd-fe-admin
+          submodules: recursive
+
+      - name: Clone fe-admin booking plugin
+        uses: actions/checkout@v4
+        with:
+          repository: VBWD-platform/vbwd-fe-admin-plugin-booking
+          ref: main
+          path: vbwd-fe-admin/plugins/booking
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: vbwd-fe-admin/package-lock.json
+
+      - name: Build fe-core submodule
+        working-directory: vbwd-fe-admin/vbwd-fe-core
+        run: npm install && npm run build
+
+      - name: Install fe-admin dependencies
+        working-directory: vbwd-fe-admin
+        run: npm install
+
+      - name: Install ALL fe-admin plugins
+        working-directory: vbwd-fe-admin/plugins
+        run: |
+          for entry in "analytics-widget:vbwd-fe-admin-plugin-analytics-widget" "cms-admin:vbwd-fe-admin-plugin-cms" "email-admin:vbwd-fe-admin-plugin-email" "ghrm-admin:vbwd-fe-admin-plugin-ghrm" "taro-admin:vbwd-fe-admin-plugin-taro"; do
+            name="${entry%%:*}"; repo="${entry##*:}"
+            [ -d "$name" ] && continue
+            git clone --depth=1 -q "https://github.com/VBWD-platform/${repo}.git" "$name" 2>/dev/null || echo "Skipping $name"
+          done
+
+      - name: Install Playwright browsers
+        working-directory: vbwd-fe-admin
+        run: npx playwright install --with-deps chromium
+
+      - name: Start fe-admin dev server
+        working-directory: vbwd-fe-admin
+        run: npm run dev -- --host &
+
+      - name: Wait for fe-admin dev server
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:5173/ > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -sf http://localhost:5173/ || exit 1
+
+      # ── Run tests ─────────────────────────────────────────────────────
+      - name: Run Playwright e2e tests
+        working-directory: vbwd-fe-admin
+        run: E2E_BASE_URL=http://localhost:5173 npx playwright test plugins/booking/tests/e2e/ --config=playwright.platform.config.ts --reporter=list
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: vbwd-fe-admin/playwright-report/
+          retention-days: 7
 
       - name: Cleanup
         if: always()
