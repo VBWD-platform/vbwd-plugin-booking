@@ -1,15 +1,16 @@
-"""BookableResourceType model."""
+"""BookingCustomSchema model."""
 from vbwd.extensions import db
 from vbwd.models.base import BaseModel
 
 
-class BookableResourceType(BaseModel):
-    """Admin-managed resource type (e.g., Specialist, Room, Space)."""
+class BookingCustomSchema(BaseModel):
+    """Admin-managed schema — defines resource type + booking form fields."""
 
-    __tablename__ = "booking_resource_type"
+    __tablename__ = "booking_custom_schema"
 
     name = db.Column(db.String(255), nullable=False)
     slug = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    fields = db.Column(db.JSON, nullable=False, default=list)
     sort_order = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)
 
@@ -18,6 +19,7 @@ class BookableResourceType(BaseModel):
             "id": str(self.id),
             "name": self.name,
             "slug": self.slug,
+            "fields": self.fields or [],
             "sort_order": self.sort_order,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -25,4 +27,4 @@ class BookableResourceType(BaseModel):
         }
 
     def __repr__(self) -> str:
-        return f"<BookableResourceType(name='{self.name}', slug='{self.slug}')>"
+        return f"<BookingCustomSchema(name='{self.name}', slug='{self.slug}')>"

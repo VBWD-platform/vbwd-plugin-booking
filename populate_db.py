@@ -16,16 +16,75 @@ from plugins.booking.booking.models.resource_category import (  # noqa: E402
     BookableResourceCategory,
 )
 from plugins.booking.booking.models.resource import BookableResource  # noqa: E402
-from plugins.booking.booking.models.resource_type import BookableResourceType  # noqa: E402
+from plugins.booking.booking.models.custom_schema import BookingCustomSchema  # noqa: E402
 from plugins.booking.booking.models.booking import Booking  # noqa: E402
 
 
-RESOURCE_TYPES = [
-    {"name": "Specialist", "slug": "specialist", "sort_order": 0},
-    {"name": "Room", "slug": "room", "sort_order": 1},
-    {"name": "Space", "slug": "space", "sort_order": 2},
-    {"name": "Seat", "slug": "seat", "sort_order": 3},
-    {"name": "Class", "slug": "class", "sort_order": 4},
+SCHEMAS = [
+    {
+        "name": "Specialist",
+        "slug": "specialist",
+        "sort_order": 0,
+        "fields": [
+            {"id": "symptoms", "label": "Symptoms", "type": "text", "required": True},
+            {
+                "id": "insurance",
+                "label": "Insurance ID",
+                "type": "string",
+                "required": False,
+            },
+        ],
+    },
+    {
+        "name": "Room",
+        "slug": "room",
+        "sort_order": 1,
+        "fields": [
+            {
+                "id": "guests",
+                "label": "Number of Guests",
+                "type": "integer",
+                "required": True,
+            },
+            {
+                "id": "breakfast",
+                "label": "Include Breakfast?",
+                "type": "boolean",
+                "required": False,
+            },
+        ],
+    },
+    {
+        "name": "Space",
+        "slug": "space",
+        "sort_order": 2,
+        "fields": [
+            {
+                "id": "attendees",
+                "label": "Number of Attendees",
+                "type": "integer",
+                "required": True,
+            },
+            {
+                "id": "projector",
+                "label": "Need Projector?",
+                "type": "boolean",
+                "required": False,
+            },
+        ],
+    },
+    {
+        "name": "Seat",
+        "slug": "seat",
+        "sort_order": 3,
+        "fields": [],
+    },
+    {
+        "name": "Class",
+        "slug": "class",
+        "sort_order": 4,
+        "fields": [],
+    },
 ]
 
 CATEGORIES = [
@@ -228,27 +287,31 @@ RESOURCES = [
 def populate(force=False):
     print("=== Booking Plugin — Demo Data ===\n")
 
-    # Resource Types
-    for type_data in RESOURCE_TYPES:
+    # Schemas (replace resource types)
+    schema_map = {}
+    for schema_data in SCHEMAS:
         existing = (
-            db.session.query(BookableResourceType)
-            .filter_by(slug=type_data["slug"])
+            db.session.query(BookingCustomSchema)
+            .filter_by(slug=schema_data["slug"])
             .first()
         )
         if existing and not force:
-            print(f"  Exists: type '{existing.name}'")
+            print(f"  Exists: schema '{existing.name}'")
+            schema_map[schema_data["slug"]] = existing
         else:
             if existing and force:
-                resource_type = existing
+                schema = existing
             else:
-                resource_type = BookableResourceType()
-            resource_type.name = type_data["name"]
-            resource_type.slug = type_data["slug"]
-            resource_type.sort_order = type_data["sort_order"]
-            resource_type.is_active = True
-            db.session.add(resource_type)
+                schema = BookingCustomSchema()
+            schema.name = schema_data["name"]
+            schema.slug = schema_data["slug"]
+            schema.fields = schema_data["fields"]
+            schema.sort_order = schema_data["sort_order"]
+            schema.is_active = True
+            db.session.add(schema)
             db.session.flush()
-            print(f"  Created: type '{resource_type.name}'")
+            print(f"  Created: schema '{schema.name}'")
+            schema_map[schema_data["slug"]] = schema
 
     # Categories
     category_map = {}
@@ -295,13 +358,17 @@ def populate(force=False):
         resource.name = resource_data["name"]
         resource.slug = resource_data["slug"]
         resource.description = resource_data["description"]
-        resource.resource_type = resource_data["resource_type"]
+        # Assign schema by slug
+        schema_slug = resource_data["resource_type"]
+        schema = schema_map.get(schema_slug)
+        if schema:
+            resource.custom_schema_id = schema.id
         resource.capacity = resource_data["capacity"]
         resource.slot_duration_minutes = resource_data["slot_duration_minutes"]
         resource.price = resource_data["price"]
         resource.price_unit = resource_data["price_unit"]
         resource.availability = resource_data["availability"]
-        resource.custom_fields_schema = resource_data["custom_fields_schema"]
+        resource.custom_fields_schema = resource_data.get("custom_fields_schema")
         resource.config = resource_data["config"]
         resource.is_active = True
 
@@ -314,7 +381,7 @@ def populate(force=False):
 
         db.session.add(resource)
         db.session.flush()
-        print(f"  Created: resource '{resource.name}' ({resource.resource_type})")
+        print(f"  Created: resource '{resource.name}' (schema: {schema_slug})")
 
     db.session.commit()
 

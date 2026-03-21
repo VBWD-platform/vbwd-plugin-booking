@@ -11,8 +11,8 @@ from plugins.booking.booking.repositories.resource_category_repository import (
 from plugins.booking.booking.repositories.resource_repository import (
     ResourceRepository,
 )
-from plugins.booking.booking.repositories.resource_type_repository import (
-    ResourceTypeRepository,
+from plugins.booking.booking.repositories.custom_schema_repository import (
+    CustomSchemaRepository,
 )
 from plugins.booking.booking.repositories.booking_repository import (
     BookingRepository,
@@ -51,8 +51,8 @@ def _category_repo() -> ResourceCategoryRepository:
     return ResourceCategoryRepository(db.session)
 
 
-def _type_repo() -> ResourceTypeRepository:
-    return ResourceTypeRepository(db.session)
+def _schema_repo() -> CustomSchemaRepository:
+    return CustomSchemaRepository(db.session)
 
 
 def _availability_service() -> AvailabilityService:
@@ -212,6 +212,16 @@ def admin_create_category():
     return jsonify(category.to_dict()), 201
 
 
+@booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["GET"])
+@require_auth
+@require_admin
+def admin_get_category(category_id):
+    category = _category_repo().find_by_id(category_id)
+    if not category:
+        return jsonify({"error": "Category not found"}), 404
+    return jsonify(category.to_dict())
+
+
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["PUT"])
 @require_auth
 @require_admin
@@ -250,78 +260,85 @@ def admin_delete_category(category_id):
     return jsonify({"deleted": True})
 
 
-# ── Resource Type admin routes ────────────────────────────────────────────────
+# ── Schema admin routes ───────────────────────────────────────────────────────
 
 
-@booking_bp.route("/api/v1/admin/booking/resource-types", methods=["GET"])
+@booking_bp.route("/api/v1/admin/booking/schemas", methods=["GET"])
 @require_auth
 @require_admin
-def admin_list_resource_types():
-    resource_types = _type_repo().find_all(active_only=False)
-    return jsonify(
-        {"resource_types": [resource_type.to_dict() for resource_type in resource_types]}
-    )
+def admin_list_schemas():
+    schemas = _schema_repo().find_all(active_only=False)
+    return jsonify({"schemas": [schema.to_dict() for schema in schemas]})
 
 
-@booking_bp.route("/api/v1/admin/booking/resource-types", methods=["POST"])
+@booking_bp.route("/api/v1/admin/booking/schemas", methods=["POST"])
 @require_auth
 @require_admin
-def admin_create_resource_type():
+def admin_create_schema():
     data = request.get_json()
     if not data or not data.get("name") or not data.get("slug"):
         return jsonify({"error": "name and slug required"}), 400
 
-    from plugins.booking.booking.models.resource_type import BookableResourceType
+    from plugins.booking.booking.models.custom_schema import BookingCustomSchema
 
-    resource_type = BookableResourceType()
-    resource_type.name = data["name"]
-    resource_type.slug = data["slug"]
-    resource_type.sort_order = data.get("sort_order", 0)
-    resource_type.is_active = data.get("is_active", True)
+    schema = BookingCustomSchema()
+    schema.name = data["name"]
+    schema.slug = data["slug"]
+    schema.fields = data.get("fields", [])
+    schema.sort_order = data.get("sort_order", 0)
+    schema.is_active = data.get("is_active", True)
 
-    _type_repo().save(resource_type)
+    _schema_repo().save(schema)
     db.session.commit()
-    return jsonify(resource_type.to_dict()), 201
+    return jsonify(schema.to_dict()), 201
 
 
-@booking_bp.route("/api/v1/admin/booking/resource-types/<type_id>", methods=["PUT"])
+@booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["GET"])
 @require_auth
 @require_admin
-def admin_update_resource_type(type_id):
-    resource_type = _type_repo().find_by_id(type_id)
-    if not resource_type:
-        return jsonify({"error": "Resource type not found"}), 404
+def admin_get_schema(schema_id):
+    schema = _schema_repo().find_by_id(schema_id)
+    if not schema:
+        return jsonify({"error": "Schema not found"}), 404
+    return jsonify(schema.to_dict())
+
+
+@booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["PUT"])
+@require_auth
+@require_admin
+def admin_update_schema(schema_id):
+    schema = _schema_repo().find_by_id(schema_id)
+    if not schema:
+        return jsonify({"error": "Schema not found"}), 404
 
     data = request.get_json()
-    for field in ["name", "slug", "sort_order", "is_active"]:
+    for field in ["name", "slug", "fields", "sort_order", "is_active"]:
         if field in data:
-            setattr(resource_type, field, data[field])
+            setattr(schema, field, data[field])
 
     db.session.commit()
-    return jsonify(resource_type.to_dict())
+    return jsonify(schema.to_dict())
 
 
-@booking_bp.route("/api/v1/admin/booking/resource-types/<type_id>", methods=["DELETE"])
+@booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["DELETE"])
 @require_auth
 @require_admin
-def admin_delete_resource_type(type_id):
-    resource_type = _type_repo().find_by_id(type_id)
-    if not resource_type:
-        return jsonify({"error": "Resource type not found"}), 404
-    _type_repo().delete(resource_type)
+def admin_delete_schema(schema_id):
+    schema = _schema_repo().find_by_id(schema_id)
+    if not schema:
+        return jsonify({"error": "Schema not found"}), 404
+    _schema_repo().delete(schema)
     db.session.commit()
     return jsonify({"deleted": True})
 
 
-# ── Public resource types route ──────────────────────────────────────────────
+# ── Public schemas route ─────────────────────────────────────────────────────
 
 
-@booking_bp.route("/api/v1/booking/resource-types", methods=["GET"])
-def list_resource_types():
-    resource_types = _type_repo().find_all(active_only=True)
-    return jsonify(
-        {"resource_types": [resource_type.to_dict() for resource_type in resource_types]}
-    )
+@booking_bp.route("/api/v1/booking/schemas", methods=["GET"])
+def list_schemas():
+    schemas = _schema_repo().find_all(active_only=True)
+    return jsonify({"schemas": [schema.to_dict() for schema in schemas]})
 
 
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["GET"])
@@ -356,7 +373,7 @@ def admin_create_resource():
     resource.name = data["name"]
     resource.slug = data["slug"]
     resource.description = data.get("description")
-    resource.resource_type = data["resource_type"]
+    resource.custom_schema_id = data.get("custom_schema_id")
     resource.capacity = data.get("capacity", 1)
     resource.slot_duration_minutes = data.get("slot_duration_minutes")
     resource.price = data["price"]
@@ -395,7 +412,7 @@ def admin_update_resource(resource_id):
         "name",
         "slug",
         "description",
-        "resource_type",
+        "custom_schema_id",
         "capacity",
         "slot_duration_minutes",
         "price",
@@ -713,3 +730,182 @@ def admin_test_export_rule(rule_id):
             "last_error": rule.last_error,
         }
     )
+
+
+# ── Resource Image Gallery routes ────────────────────────────────────────────
+
+
+def _cms_available():
+    try:
+        from plugins.cms.src.models.cms_image import CmsImage  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["GET"]
+)
+@require_auth
+@require_admin
+def admin_list_resource_images(resource_id):
+    if not _cms_available():
+        return jsonify({"error": "CMS plugin required for image gallery"}), 501
+
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    images = (
+        db.session.query(BookableResourceImage)
+        .filter_by(resource_id=resource_id)
+        .order_by(BookableResourceImage.sort_order)
+        .all()
+    )
+    return jsonify({"images": [img.to_dict() for img in images]})
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["POST"]
+)
+@require_auth
+@require_admin
+def admin_upload_resource_image(resource_id):
+    if not _cms_available():
+        return jsonify({"error": "CMS plugin required for image gallery"}), 501
+
+    if "file" not in request.files:
+        return jsonify({"error": "file upload required"}), 400
+
+    uploaded_file = request.files["file"]
+    file_data = uploaded_file.read()
+    filename = uploaded_file.filename or "image.jpg"
+    mime_type = uploaded_file.content_type or "image/jpeg"
+
+    from plugins.cms.src.services.cms_image_service import CmsImageService
+    from plugins.cms.src.repositories.cms_image_repository import (
+        CmsImageRepository,
+    )
+    from plugins.cms.src.services.file_storage import LocalFileStorage
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    image_repo = CmsImageRepository(db.session)
+    storage = LocalFileStorage(
+        base_path="/app/uploads",
+        base_url="/uploads",
+    )
+    cms_service = CmsImageService(image_repo, storage)
+
+    cms_image_data = cms_service.upload_image(file_data, filename, mime_type)
+
+    # Count existing images for sort_order
+    existing_count = (
+        db.session.query(BookableResourceImage)
+        .filter_by(resource_id=resource_id)
+        .count()
+    )
+
+    resource_image = BookableResourceImage()
+    resource_image.resource_id = resource_id
+    resource_image.cms_image_id = cms_image_data["id"]
+    resource_image.is_primary = existing_count == 0  # First image is primary
+    resource_image.sort_order = existing_count
+
+    db.session.add(resource_image)
+    db.session.commit()
+    return jsonify(resource_image.to_dict()), 201
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images/<image_id>/primary",
+    methods=["POST"],
+)
+@require_auth
+@require_admin
+def admin_set_primary_image(resource_id, image_id):
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    # Clear all primary flags for this resource
+    db.session.query(BookableResourceImage).filter_by(
+        resource_id=resource_id
+    ).update({"is_primary": False})
+
+    # Set the target image as primary
+    target = (
+        db.session.query(BookableResourceImage)
+        .filter_by(id=image_id, resource_id=resource_id)
+        .first()
+    )
+    if not target:
+        return jsonify({"error": "Image not found"}), 404
+
+    target.is_primary = True
+    db.session.commit()
+    return jsonify(target.to_dict())
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images/reorder",
+    methods=["POST"],
+)
+@require_auth
+@require_admin
+def admin_reorder_resource_images(resource_id):
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    data = request.get_json()
+    if not data or "order" not in data:
+        return jsonify({"error": "order array required"}), 400
+
+    for index, image_id in enumerate(data["order"]):
+        db.session.query(BookableResourceImage).filter_by(
+            id=image_id, resource_id=resource_id
+        ).update({"sort_order": index})
+
+    db.session.commit()
+    return jsonify({"reordered": True})
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images/<image_id>",
+    methods=["DELETE"],
+)
+@require_auth
+@require_admin
+def admin_delete_resource_image(resource_id, image_id):
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    target = (
+        db.session.query(BookableResourceImage)
+        .filter_by(id=image_id, resource_id=resource_id)
+        .first()
+    )
+    if not target:
+        return jsonify({"error": "Image not found"}), 404
+
+    was_primary = target.is_primary
+    db.session.delete(target)
+    db.session.flush()
+
+    # If deleted image was primary, promote the first remaining image
+    if was_primary:
+        first = (
+            db.session.query(BookableResourceImage)
+            .filter_by(resource_id=resource_id)
+            .order_by(BookableResourceImage.sort_order)
+            .first()
+        )
+        if first:
+            first.is_primary = True
+
+    db.session.commit()
+    return jsonify({"deleted": True})
