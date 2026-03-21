@@ -1,6 +1,6 @@
 """Booking plugin routes — public + admin."""
 from datetime import date, datetime
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 
 from vbwd.extensions import db
 from vbwd.middleware.auth import require_auth, require_admin
@@ -131,7 +131,7 @@ def create_booking():
 
     try:
         booking = _booking_service().create_booking(
-            user_id=request.user_id,
+            user_id=g.user_id,
             resource_slug=data["resource_slug"],
             start_at=start_at,
             end_at=end_at,
@@ -148,7 +148,7 @@ def create_booking():
 @booking_bp.route("/api/v1/booking/bookings", methods=["GET"])
 @require_auth
 def list_user_bookings():
-    bookings = _booking_service().get_user_bookings(request.user_id)
+    bookings = _booking_service().get_user_bookings(g.user_id)
     return jsonify({"bookings": [booking.to_dict() for booking in bookings]})
 
 
@@ -158,7 +158,7 @@ def get_booking(booking_id):
     booking = _booking_service().get_booking(booking_id)
     if not booking:
         return jsonify({"error": "Booking not found"}), 404
-    if str(booking.user_id) != str(request.user_id):
+    if str(booking.user_id) != str(g.user_id):
         return jsonify({"error": "Forbidden"}), 403
     return jsonify(booking.to_dict())
 

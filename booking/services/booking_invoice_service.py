@@ -41,7 +41,7 @@ class BookingInvoiceService:
             "booking_id": str(booking.id),
             "resource_slug": resource.slug,
             "resource_name": resource.name,
-            "resource_type": resource.resource_type,
+            "resource_type": resource.custom_schema.slug if resource.custom_schema else "unclassified",
             "start_at": booking.start_at.isoformat(),
             "end_at": booking.end_at.isoformat(),
             "custom_fields": booking.custom_fields or {},

@@ -80,7 +80,7 @@ class ImportService:
 
                 existing = self.resource_repository.find_by_slug(slug)
                 if existing:
-                    for field in ["name", "description", "resource_type", "price_unit"]:
+                    for field in ["name", "description", "price_unit"]:
                         if field in row:
                             setattr(existing, field, row[field])
                     if "capacity" in row:
@@ -98,7 +98,6 @@ class ImportService:
                     resource = BookableResource()
                     resource.name = row.get("name", slug)
                     resource.slug = slug
-                    resource.resource_type = row.get("resource_type", "specialist")
                     resource.capacity = int(row.get("capacity", 1))
                     resource.price = Decimal(str(row.get("price", "0.00")))
                     resource.currency = row.get("currency", "EUR")
