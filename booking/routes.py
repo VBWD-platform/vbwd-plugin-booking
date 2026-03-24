@@ -1,5 +1,5 @@
 """Booking plugin routes — public + admin."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from flask import Blueprint, jsonify, request, g
 
 from vbwd.extensions import db
@@ -111,9 +111,10 @@ def get_availability(slug):
     return jsonify({"date": date_str, "slots": slots})
 
 
-@booking_bp.route("/api/v1/booking/bookings", methods=["POST"])
+@booking_bp.route("/api/v1/booking/checkout", methods=["POST"])
 @require_auth
-def create_booking():
+def booking_checkout():
+    """Create invoice for a booking — booking is created later on invoice.paid."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "Request body required"}), 400
@@ -129,20 +130,52 @@ def create_booking():
     except ValueError:
         return jsonify({"error": "Invalid datetime format"}), 400
 
-    try:
-        booking = _booking_service().create_booking(
-            user_id=g.user_id,
-            resource_slug=data["resource_slug"],
-            start_at=start_at,
-            end_at=end_at,
-            quantity=data.get("quantity", 1),
-            custom_fields=data.get("custom_fields"),
-            notes=data.get("notes"),
+    resource = _resource_repo().find_by_slug(data["resource_slug"])
+    if not resource:
+        return jsonify({"error": "Resource not found"}), 404
+
+    if not resource.is_active:
+        return jsonify({"error": "Resource is not active"}), 400
+
+    # Check capacity
+    booked_count = BookingRepository(db.session).count_by_resource_and_slot(
+        resource.id, start_at, end_at
+    )
+    quantity = data.get("quantity", 1)
+    available_capacity = resource.capacity - booked_count
+    if quantity > available_capacity:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        f"Not enough capacity: requested {quantity}, "
+                        f"available {available_capacity}"
+                    )
+                }
+            ),
+            400,
         )
-        db.session.commit()
-        return jsonify(booking.to_dict()), 201
-    except BookingError as error:
-        return jsonify({"error": str(error)}), 400
+
+    invoice = BookingInvoiceService(db.session).create_checkout_invoice(
+        user_id=g.user_id,
+        resource=resource,
+        start_at=start_at,
+        end_at=end_at,
+        quantity=quantity,
+        custom_fields=data.get("custom_fields"),
+        notes=data.get("notes"),
+    )
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "invoice_id": str(invoice.id),
+                "invoice_number": invoice.invoice_number,
+            }
+        ),
+        201,
+    )
 
 
 @booking_bp.route("/api/v1/booking/bookings", methods=["GET"])
@@ -175,6 +208,42 @@ def cancel_booking(booking_id):
 
 
 # ── Admin routes ──────────────────────────────────────────────────────────────
+
+
+@booking_bp.route("/api/v1/admin/booking/bookings", methods=["POST"])
+@require_auth
+@require_admin
+def admin_create_booking():
+    """Admin-only: create a booking directly (bypasses checkout/payment)."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+
+    required_fields = ["resource_slug", "start_at", "end_at", "user_id"]
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"'{field}' is required"}), 400
+
+    try:
+        start_at = datetime.fromisoformat(data["start_at"])
+        end_at = datetime.fromisoformat(data["end_at"])
+    except ValueError:
+        return jsonify({"error": "Invalid datetime format"}), 400
+
+    try:
+        booking = _booking_service().create_booking(
+            user_id=data["user_id"],
+            resource_slug=data["resource_slug"],
+            start_at=start_at,
+            end_at=end_at,
+            quantity=data.get("quantity", 1),
+            custom_fields=data.get("custom_fields"),
+            notes=data.get("notes"),
+        )
+        db.session.commit()
+        return jsonify(booking.to_dict()), 201
+    except BookingError as error:
+        return jsonify({"error": str(error)}), 400
 
 
 @booking_bp.route("/api/v1/admin/booking/categories", methods=["GET"])
@@ -831,9 +900,9 @@ def admin_set_primary_image(resource_id, image_id):
     )
 
     # Clear all primary flags for this resource
-    db.session.query(BookableResourceImage).filter_by(
-        resource_id=resource_id
-    ).update({"is_primary": False})
+    db.session.query(BookableResourceImage).filter_by(resource_id=resource_id).update(
+        {"is_primary": False}
+    )
 
     # Set the target image as primary
     target = (
@@ -909,3 +978,276 @@ def admin_delete_resource_image(resource_id, image_id):
 
     db.session.commit()
     return jsonify({"deleted": True})
+
+
+# ── Schedule & Slot Block routes ─────────────────────────────────────────────
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/schedule", methods=["GET"]
+)
+@require_auth
+@require_admin
+def admin_get_schedule(resource_id):
+    """Get schedule for a date range: generated slots + bookings + blocks."""
+    from plugins.booking.booking.models.slot_block import (
+        BookableResourceSlotBlock,
+    )
+    from plugins.booking.booking.models.booking import Booking
+
+    resource = _resource_repo().find_by_id(resource_id)
+    if not resource:
+        return jsonify({"error": "Resource not found"}), 404
+
+    date_from_str = request.args.get("date_from", date.today().isoformat())
+    date_to_str = request.args.get(
+        "date_to", (date.today() + timedelta(days=6)).isoformat()
+    )
+    date_from_val = date.fromisoformat(date_from_str)
+    date_to_val = date.fromisoformat(date_to_str)
+
+    availability = resource.availability or {}
+    schedule = availability.get("schedule", {})
+    exceptions = availability.get("exceptions", [])
+    config = resource.config or {}
+    buffer_minutes = config.get("buffer_minutes", 0)
+    slot_duration = resource.slot_duration_minutes
+
+    # Load bookings for the range
+    bookings = (
+        db.session.query(Booking)
+        .filter(
+            Booking.resource_id == resource_id,
+            Booking.start_at >= datetime.combine(date_from_val, datetime.min.time()),
+            Booking.start_at <= datetime.combine(date_to_val, datetime.max.time()),
+            Booking.status.in_(["confirmed", "pending"]),
+        )
+        .all()
+    )
+
+    # Load blocks for the range
+    blocks = (
+        db.session.query(BookableResourceSlotBlock)
+        .filter(
+            BookableResourceSlotBlock.resource_id == resource_id,
+            BookableResourceSlotBlock.date >= date_from_val,
+            BookableResourceSlotBlock.date <= date_to_val,
+        )
+        .all()
+    )
+
+    weekday_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    days = []
+    current_date = date_from_val
+
+    while current_date <= date_to_val:
+        date_str = current_date.isoformat()
+        weekday_name = weekday_names[current_date.weekday()]
+
+        # Check exceptions
+        is_closed = False
+        exception_slots = None
+        for exc in exceptions:
+            if exc.get("date") == date_str:
+                if exc.get("closed"):
+                    is_closed = True
+                elif "slots" in exc:
+                    exception_slots = exc["slots"]
+                break
+
+        if is_closed:
+            days.append({"date": date_str, "closed": True, "slots": []})
+            current_date += timedelta(days=1)
+            continue
+
+        time_windows = exception_slots or schedule.get(weekday_name, [])
+
+        if not time_windows or slot_duration is None:
+            days.append(
+                {
+                    "date": date_str,
+                    "closed": not time_windows,
+                    "slots": [],
+                }
+            )
+            current_date += timedelta(days=1)
+            continue
+
+        # Generate all slots for this day
+        day_bookings = [b for b in bookings if b.start_at.date() == current_date]
+        day_blocks = [b for b in blocks if b.date == current_date]
+
+        day_slots = []
+        slot_td = timedelta(minutes=slot_duration)
+        buffer_td = timedelta(minutes=buffer_minutes)
+
+        for window in time_windows:
+            w_start = datetime.strptime(window["start"], "%H:%M").time()
+            w_end = datetime.combine(
+                current_date, datetime.strptime(window["end"], "%H:%M").time()
+            )
+            current_dt = datetime.combine(current_date, w_start)
+
+            while current_dt + slot_td <= w_end:
+                slot_end_dt = current_dt + slot_td
+                start_str = current_dt.strftime("%H:%M")
+                end_str = slot_end_dt.strftime("%H:%M")
+
+                # Check if booked (overlap: booking overlaps this slot)
+                booking_match = next(
+                    (
+                        b
+                        for b in day_bookings
+                        if b.start_at < slot_end_dt and b.end_at > current_dt
+                    ),
+                    None,
+                )
+
+                # Check if blocked
+                block_match = next(
+                    (b for b in day_blocks if b.start_time == start_str),
+                    None,
+                )
+
+                if booking_match:
+                    # Resolve customer name from user_details
+                    from vbwd.models.user import User
+                    from vbwd.models.user_details import UserDetails
+
+                    booked_user = db.session.get(User, booking_match.user_id)
+                    details = (
+                        (
+                            db.session.query(UserDetails)
+                            .filter_by(user_id=booking_match.user_id)
+                            .first()
+                        )
+                        if booked_user
+                        else None
+                    )
+                    if details and details.first_name:
+                        customer_name = (
+                            f"{details.first_name} {details.last_name or ''}".strip()
+                        )
+                    elif booked_user:
+                        customer_name = booked_user.email
+                    else:
+                        customer_name = "Unknown"
+                    slot_info = {
+                        "start": start_str,
+                        "end": end_str,
+                        "status": "booked",
+                        "booking_id": str(booking_match.id),
+                        "booking_status": booking_match.status,
+                        "customer_name": customer_name,
+                    }
+                elif block_match:
+                    slot_info = {
+                        "start": start_str,
+                        "end": end_str,
+                        "status": "blocked",
+                        "block_id": str(block_match.id),
+                        "reason": block_match.reason,
+                    }
+                else:
+                    slot_info = {
+                        "start": start_str,
+                        "end": end_str,
+                        "status": "available",
+                    }
+
+                day_slots.append(slot_info)
+                current_dt += slot_td + buffer_td
+
+        days.append({"date": date_str, "closed": False, "slots": day_slots})
+        current_date += timedelta(days=1)
+
+    return jsonify(
+        {
+            "resource_id": resource_id,
+            "date_from": date_from_str,
+            "date_to": date_to_str,
+            "days": days,
+        }
+    )
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/block-slot", methods=["POST"]
+)
+@require_auth
+@require_admin
+def admin_block_slot(resource_id):
+    from plugins.booking.booking.models.slot_block import (
+        BookableResourceSlotBlock,
+    )
+
+    data = request.get_json()
+    if not data or not data.get("date") or not data.get("start") or not data.get("end"):
+        return jsonify({"error": "date, start, end required"}), 400
+
+    block = BookableResourceSlotBlock()
+    block.resource_id = resource_id
+    block.date = date.fromisoformat(data["date"])
+    block.start_time = data["start"]
+    block.end_time = data["end"]
+    block.reason = data.get("reason")
+    block.blocked_by = g.user_id
+
+    db.session.add(block)
+    db.session.commit()
+    return jsonify(block.to_dict()), 201
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/block-slot/<block_id>",
+    methods=["DELETE"],
+)
+@require_auth
+@require_admin
+def admin_unblock_slot(resource_id, block_id):
+    from plugins.booking.booking.models.slot_block import (
+        BookableResourceSlotBlock,
+    )
+
+    block = (
+        db.session.query(BookableResourceSlotBlock)
+        .filter_by(id=block_id, resource_id=resource_id)
+        .first()
+    )
+    if not block:
+        return jsonify({"error": "Block not found"}), 404
+
+    db.session.delete(block)
+    db.session.commit()
+    return jsonify({"unblocked": True})
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/copy-schedule",
+    methods=["POST"],
+)
+@require_auth
+@require_admin
+def admin_copy_schedule(resource_id):
+    source = _resource_repo().find_by_id(resource_id)
+    if not source:
+        return jsonify({"error": "Source resource not found"}), 404
+
+    data = request.get_json()
+    target_ids = data.get("target_resource_ids", [])
+    if not target_ids:
+        return jsonify({"error": "target_resource_ids required"}), 400
+
+    copied = 0
+    for target_id in target_ids:
+        target = _resource_repo().find_by_id(target_id)
+        if target and str(target.id) != str(source.id):
+            target.availability = source.availability
+            target.config = {
+                **(target.config or {}),
+                "buffer_minutes": (source.config or {}).get("buffer_minutes", 0),
+            }
+            copied += 1
+
+    db.session.commit()
+    return jsonify({"copied": copied})

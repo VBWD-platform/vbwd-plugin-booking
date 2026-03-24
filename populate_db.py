@@ -1,3 +1,4 @@
+# flake8: noqa: E501
 #!/usr/bin/env python3
 """Populate booking demo data. Idempotent — safe to re-run.
 
@@ -16,7 +17,9 @@ from plugins.booking.booking.models.resource_category import (  # noqa: E402
     BookableResourceCategory,
 )
 from plugins.booking.booking.models.resource import BookableResource  # noqa: E402
-from plugins.booking.booking.models.custom_schema import BookingCustomSchema  # noqa: E402
+from plugins.booking.booking.models.custom_schema import (  # noqa: E402
+    BookingCustomSchema,
+)
 from plugins.booking.booking.models.booking import Booking  # noqa: E402
 
 
@@ -440,6 +443,9 @@ def populate(force=False):
 
         CATALOGUE_LAYOUT_SLUG = "booking-catalogue"
         DETAIL_LAYOUT_SLUG = "booking-resource-detail"
+        FORM_LAYOUT_SLUG = "booking-form"
+        SUCCESS_LAYOUT_SLUG = "booking-success"
+        CANCEL_LAYOUT_SLUG = "booking-cancel"
 
         catalogue_areas = [
             {"name": "header", "type": "header", "label": "Header"},
@@ -450,7 +456,27 @@ def populate(force=False):
         detail_areas = [
             {"name": "header", "type": "header", "label": "Header"},
             {"name": "breadcrumbs", "type": "vue", "label": ""},
-            {"name": "booking-resource-detail", "type": "vue", "label": "Resource Detail"},
+            {
+                "name": "booking-resource-detail",
+                "type": "vue",
+                "label": "Resource Detail",
+            },
+            {"name": "footer", "type": "footer", "label": "Footer"},
+        ]
+        form_areas = [
+            {"name": "header", "type": "header", "label": "Header"},
+            {"name": "breadcrumbs", "type": "vue", "label": ""},
+            {"name": "booking-form", "type": "vue", "label": "Booking Form"},
+            {"name": "footer", "type": "footer", "label": "Footer"},
+        ]
+        success_areas = [
+            {"name": "header", "type": "header", "label": "Header"},
+            {"name": "booking-success", "type": "vue", "label": "Booking Success"},
+            {"name": "footer", "type": "footer", "label": "Footer"},
+        ]
+        cancel_areas = [
+            {"name": "header", "type": "header", "label": "Header"},
+            {"name": "booking-cancel", "type": "vue", "label": "Booking Cancel"},
             {"name": "footer", "type": "footer", "label": "Footer"},
         ]
 
@@ -482,6 +508,45 @@ def populate(force=False):
             db.session.flush()
         print(f"  {'Created' if created else 'Exists'}: {DETAIL_LAYOUT_SLUG}")
 
+        layout_form, created = _get_or_create(
+            CmsLayout,
+            FORM_LAYOUT_SLUG,
+            name="Booking Form",
+            areas=form_areas,
+            sort_order=22,
+            is_active=True,
+        )
+        if not created:
+            layout_form.areas = form_areas
+            db.session.flush()
+        print(f"  {'Created' if created else 'Exists'}: {FORM_LAYOUT_SLUG}")
+
+        layout_success, created = _get_or_create(
+            CmsLayout,
+            SUCCESS_LAYOUT_SLUG,
+            name="Booking Success",
+            areas=success_areas,
+            sort_order=23,
+            is_active=True,
+        )
+        if not created:
+            layout_success.areas = success_areas
+            db.session.flush()
+        print(f"  {'Created' if created else 'Exists'}: {SUCCESS_LAYOUT_SLUG}")
+
+        layout_cancel, created = _get_or_create(
+            CmsLayout,
+            CANCEL_LAYOUT_SLUG,
+            name="Booking Cancel",
+            areas=cancel_areas,
+            sort_order=24,
+            is_active=True,
+        )
+        if not created:
+            layout_cancel.areas = cancel_areas
+            db.session.flush()
+        print(f"  {'Created' if created else 'Exists'}: {CANCEL_LAYOUT_SLUG}")
+
         # ── Widgets ─────────────────────────────────────────────────────────
 
         print("\n=== CMS Widgets ===")
@@ -502,6 +567,33 @@ def populate(force=False):
                 "widget_type": "vue-component",
                 "content_json": {
                     "component": "BookingResourceDetail",
+                    "items_per_page": 1,
+                },
+            },
+            {
+                "slug": "booking-form",
+                "name": "Booking Form",
+                "widget_type": "vue-component",
+                "content_json": {
+                    "component": "BookingForm",
+                    "items_per_page": 1,
+                },
+            },
+            {
+                "slug": "booking-success",
+                "name": "Booking Success",
+                "widget_type": "vue-component",
+                "content_json": {
+                    "component": "BookingSuccess",
+                    "items_per_page": 1,
+                },
+            },
+            {
+                "slug": "booking-cancel",
+                "name": "Booking Cancel",
+                "widget_type": "vue-component",
+                "content_json": {
+                    "component": "BookingCancel",
                     "items_per_page": 1,
                 },
             },
@@ -534,40 +626,123 @@ def populate(force=False):
         # Catalogue layout
         if header_nav:
             added = _assign_widget(layout_catalogue, header_nav, "header", 0)
-            print(f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / header → header-nav")
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / header → header-nav"
+            )
         else:
             print("  ! header-nav not found — run populate_cms first")
 
         if breadcrumbs_widget:
-            added = _assign_widget(layout_catalogue, breadcrumbs_widget, "breadcrumbs", 3)
-            print(f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / breadcrumbs → breadcrumbs")
+            added = _assign_widget(
+                layout_catalogue, breadcrumbs_widget, "breadcrumbs", 3
+            )
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / breadcrumbs → breadcrumbs"
+            )
 
         added = _assign_widget(
             layout_catalogue, widget_map["booking-catalogue"], "booking-catalogue", 0
         )
-        print(f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / booking-catalogue → booking-catalogue")
+        print(
+            f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / booking-catalogue → booking-catalogue"
+        )
 
         if footer_nav:
             added = _assign_widget(layout_catalogue, footer_nav, "footer", 0)
-            print(f"  {'Assigned' if added else 'Exists'}: {CATALOGUE_LAYOUT_SLUG} / footer → footer-nav")
+            status = "Assigned" if added else "Exists"
+            print(f"  {status}: {CATALOGUE_LAYOUT_SLUG} / footer → footer-nav")
 
         # Detail layout
         if header_nav:
             added = _assign_widget(layout_detail, header_nav, "header", 0)
-            print(f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / header → header-nav")
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / header → header-nav"
+            )
 
         if breadcrumbs_widget:
             added = _assign_widget(layout_detail, breadcrumbs_widget, "breadcrumbs", 3)
-            print(f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / breadcrumbs → breadcrumbs")
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / breadcrumbs → breadcrumbs"
+            )
 
         added = _assign_widget(
-            layout_detail, widget_map["booking-resource-detail"], "booking-resource-detail", 0
+            layout_detail,
+            widget_map["booking-resource-detail"],
+            "booking-resource-detail",
+            0,
         )
-        print(f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / booking-resource-detail → booking-resource-detail")
+        status = "Assigned" if added else "Exists"
+        widget_name = "booking-resource-detail"
+        print(f"  {status}: {DETAIL_LAYOUT_SLUG} / {widget_name} → {widget_name}")
 
         if footer_nav:
             added = _assign_widget(layout_detail, footer_nav, "footer", 0)
-            print(f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / footer → footer-nav")
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {DETAIL_LAYOUT_SLUG} / footer → footer-nav"
+            )
+
+        # Form layout
+        if header_nav:
+            added = _assign_widget(layout_form, header_nav, "header", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {FORM_LAYOUT_SLUG} / header → header-nav"
+            )
+
+        if breadcrumbs_widget:
+            added = _assign_widget(layout_form, breadcrumbs_widget, "breadcrumbs", 3)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {FORM_LAYOUT_SLUG} / breadcrumbs → breadcrumbs"
+            )
+
+        added = _assign_widget(
+            layout_form, widget_map["booking-form"], "booking-form", 0
+        )
+        status = "Assigned" if added else "Exists"
+        print(f"  {status}: {FORM_LAYOUT_SLUG} / booking-form → booking-form")
+
+        if footer_nav:
+            added = _assign_widget(layout_form, footer_nav, "footer", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {FORM_LAYOUT_SLUG} / footer → footer-nav"
+            )
+
+        # Success layout
+        if header_nav:
+            added = _assign_widget(layout_success, header_nav, "header", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {SUCCESS_LAYOUT_SLUG} / header → header-nav"
+            )
+
+        added = _assign_widget(
+            layout_success, widget_map["booking-success"], "booking-success", 0
+        )
+        status = "Assigned" if added else "Exists"
+        print(f"  {status}: {SUCCESS_LAYOUT_SLUG} / booking-success → booking-success")
+
+        if footer_nav:
+            added = _assign_widget(layout_success, footer_nav, "footer", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {SUCCESS_LAYOUT_SLUG} / footer → footer-nav"
+            )
+
+        # Cancel layout
+        if header_nav:
+            added = _assign_widget(layout_cancel, header_nav, "header", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {CANCEL_LAYOUT_SLUG} / header → header-nav"
+            )
+
+        added = _assign_widget(
+            layout_cancel, widget_map["booking-cancel"], "booking-cancel", 0
+        )
+        status = "Assigned" if added else "Exists"
+        print(f"  {status}: {CANCEL_LAYOUT_SLUG} / booking-cancel → booking-cancel")
+
+        if footer_nav:
+            added = _assign_widget(layout_cancel, footer_nav, "footer", 0)
+            print(
+                f"  {'Assigned' if added else 'Exists'}: {CANCEL_LAYOUT_SLUG} / footer → footer-nav"
+            )
 
         # ── CMS Pages ───────────────────────────────────────────────────────
 
@@ -606,9 +781,143 @@ def populate(force=False):
         )
         print(f"  {'Created' if created else 'Exists'}: /booking-resource-detail")
 
+        # Template page for booking form
+        page_form, created = _get_or_create(
+            CmsPage,
+            FORM_LAYOUT_SLUG,
+            name="Booking Form",
+            language="en",
+            content_json={"type": "doc", "content": []},
+            is_published=True,
+            sort_order=2,
+            category_id=cms_cat.id,
+            layout_id=layout_form.id,
+            meta_title="Book Now",
+            robots="noindex",
+        )
+        print(f"  {'Created' if created else 'Exists'}: /{FORM_LAYOUT_SLUG}")
+
+        # Booking success page
+        page_success, created = _get_or_create(
+            CmsPage,
+            SUCCESS_LAYOUT_SLUG,
+            name="Booking Success",
+            language="en",
+            content_json={"type": "doc", "content": []},
+            is_published=True,
+            sort_order=3,
+            category_id=cms_cat.id,
+            layout_id=layout_success.id,
+            meta_title="Booking Confirmed",
+            robots="noindex",
+        )
+        print(f"  {'Created' if created else 'Exists'}: /{SUCCESS_LAYOUT_SLUG}")
+
+        # Booking cancel page
+        page_cancel, created = _get_or_create(
+            CmsPage,
+            CANCEL_LAYOUT_SLUG,
+            name="Booking Cancelled",
+            language="en",
+            content_json={"type": "doc", "content": []},
+            is_published=True,
+            sort_order=4,
+            category_id=cms_cat.id,
+            layout_id=layout_cancel.id,
+            meta_title="Payment Cancelled",
+            robots="noindex",
+        )
+        print(f"  {'Created' if created else 'Exists'}: /{CANCEL_LAYOUT_SLUG}")
+
         db.session.commit()
     except ImportError:
         print("  ! CMS plugin not installed — skipping CMS setup")
+
+    # Email templates for booking events
+    try:
+        from plugins.email.src.models.email_template import EmailTemplate
+
+        BOOKING_TEMPLATES = [
+            {
+                "event_type": "booking.created",
+                "subject": "Booking confirmed — {{ resource_name }}",
+                "html_body": (
+                    '<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">'
+                    '<h1 style="color:#27ae60;">Booking confirmed</h1>'
+                    "<p>Hi {{ user_name }},</p>"
+                    "<p>Your booking for <strong>{{ resource_name }}</strong> has been confirmed.</p>"
+                    "<ul><li>Start: {{ start_at }}</li><li>End: {{ end_at }}</li></ul>"
+                    '<p><a href="{{ booking_url }}" style="background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;">View Booking</a></p>'
+                    "</body></html>"
+                ),
+                "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} is confirmed.\nStart: {{ start_at }}\nEnd: {{ end_at }}\n\nView: {{ booking_url }}",
+                "is_active": True,
+            },
+            {
+                "event_type": "booking.cancelled",
+                "subject": "Booking cancelled — {{ resource_name }}",
+                "html_body": (
+                    '<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">'
+                    '<h1 style="color:#e74c3c;">Booking cancelled</h1>'
+                    "<p>Hi {{ user_name }},</p>"
+                    "<p>Your booking for <strong>{{ resource_name }}</strong> has been cancelled.</p>"
+                    "</body></html>"
+                ),
+                "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} has been cancelled.",
+                "is_active": True,
+            },
+            {
+                "event_type": "booking.cancelled_by_provider",
+                "subject": "Booking cancelled by provider — {{ resource_name }}",
+                "html_body": (
+                    '<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">'
+                    '<h1 style="color:#e74c3c;">Booking cancelled by provider</h1>'
+                    "<p>Hi {{ user_name }},</p>"
+                    "<p>Your booking for <strong>{{ resource_name }}</strong> was cancelled by the provider.</p>"
+                    "<p>Reason: {{ reason }}</p>"
+                    "<p>A full refund will be issued.</p>"
+                    "</body></html>"
+                ),
+                "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} was cancelled.\nReason: {{ reason }}\n\nA full refund will be issued.",
+                "is_active": True,
+            },
+            {
+                "event_type": "booking.completed",
+                "subject": "Booking completed — {{ resource_name }}",
+                "html_body": (
+                    '<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">'
+                    '<h1 style="color:#2c3e50;">Booking completed</h1>'
+                    "<p>Hi {{ user_name }},</p>"
+                    "<p>Your booking for <strong>{{ resource_name }}</strong> has been completed. Thank you!</p>"
+                    "</body></html>"
+                ),
+                "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} has been completed. Thank you!",
+                "is_active": True,
+            },
+        ]
+
+        print("\n=== Email Templates ===")
+        for tpl_data in BOOKING_TEMPLATES:
+            existing = (
+                db.session.query(EmailTemplate)
+                .filter_by(event_type=tpl_data["event_type"])
+                .first()
+            )
+            if existing:
+                print(f"  Exists: {tpl_data['event_type']}")
+            else:
+                tpl = EmailTemplate(
+                    event_type=tpl_data["event_type"],
+                    subject=tpl_data["subject"],
+                    html_body=tpl_data["html_body"],
+                    text_body=tpl_data["text_body"],
+                    is_active=tpl_data["is_active"],
+                )
+                db.session.add(tpl)
+                print(f"  Created: {tpl_data['event_type']}")
+        db.session.commit()
+    except ImportError:
+        print("  ! Email plugin not installed — skipping email templates")
 
     # Summary
     category_count = db.session.query(BookableResourceCategory).count()

@@ -24,9 +24,7 @@ class BookableResourceImage(BaseModel):
     is_primary = db.Column(db.Boolean, default=False)
     sort_order = db.Column(db.Integer, default=0)
 
-    __table_args__ = (
-        db.UniqueConstraint("resource_id", "cms_image_id"),
-    )
+    __table_args__ = (db.UniqueConstraint("resource_id", "cms_image_id"),)
 
     def to_dict(self) -> dict:
         result = {

@@ -1,5 +1,4 @@
 """Verify test infrastructure: DB tables exist, seeder works, login works."""
-import pytest
 
 
 class TestSetupCheck:

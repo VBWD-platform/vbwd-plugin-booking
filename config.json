@@ -1,14 +1,57 @@
 {
-  "booking": {
-    "default_timezone": "Europe/Berlin",
-    "max_advance_booking_days": 90,
-    "min_lead_time_hours": 1,
-    "cancellation_grace_period_hours": 24,
-    "default_confirmation_mode": "auto",
-    "default_slot_duration_minutes": 60,
-    "default_buffer_minutes": 15,
-    "invoice_prefix": "BK",
-    "enable_recurring_bookings": false,
-    "max_bookings_per_user_per_day": 5
+  "default_timezone": {
+    "type": "string",
+    "default": "Europe/Berlin",
+    "description": "Default timezone for booking schedule display"
+  },
+  "max_advance_booking_days": {
+    "type": "number",
+    "default": 90,
+    "description": "Maximum number of days in advance a user can book"
+  },
+  "min_lead_time_hours": {
+    "type": "number",
+    "default": 1,
+    "description": "Minimum hours before a slot starts that booking is allowed"
+  },
+  "cancellation_grace_period_hours": {
+    "type": "number",
+    "default": 24,
+    "description": "Hours before booking start when free cancellation is allowed"
+  },
+  "default_confirmation_mode": {
+    "type": "string",
+    "default": "auto",
+    "description": "Default booking confirmation mode: auto (instant) or manual (admin approval)"
+  },
+  "default_slot_duration_minutes": {
+    "type": "number",
+    "default": 60,
+    "description": "Default slot duration in minutes for new resources"
+  },
+  "default_buffer_minutes": {
+    "type": "number",
+    "default": 15,
+    "description": "Default buffer time between slots in minutes"
+  },
+  "invoice_prefix": {
+    "type": "string",
+    "default": "BK",
+    "description": "Prefix for booking invoice numbers (e.g., BK-a1b2c3d4)"
+  },
+  "enable_recurring_bookings": {
+    "type": "boolean",
+    "default": false,
+    "description": "Allow users to create recurring bookings"
+  },
+  "max_bookings_per_user_per_day": {
+    "type": "number",
+    "default": 5,
+    "description": "Maximum bookings a single user can make per day"
+  },
+  "capture_mode": {
+    "type": "string",
+    "default": "manual",
+    "description": "Payment capture mode: auto (charge immediately) or manual (authorize only, charge later)"
   }
 }

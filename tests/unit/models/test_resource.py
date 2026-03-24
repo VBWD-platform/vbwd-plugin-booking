@@ -105,11 +105,17 @@ class TestBookableResource:
         assert resource.config["buffer_minutes"] == 15
 
     def test_to_dict(self):
+        from plugins.booking.booking.models.custom_schema import BookingCustomSchema
+
+        schema = BookingCustomSchema()
+        schema.slug = "space"
+        schema.name = "Space"
+
         resource = BookableResource()
         resource.id = uuid.uuid4()
         resource.name = "Meeting Room A"
         resource.slug = "meeting-room-a"
-        resource.resource_type = "space"
+        resource.custom_schema = schema
         resource.capacity = 10
         resource.slot_duration_minutes = 60
         resource.price = Decimal("25.00")

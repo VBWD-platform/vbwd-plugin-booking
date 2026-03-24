@@ -14,13 +14,13 @@ BOOKING_REMINDER = "booking.reminder"
 def register_email_contexts():
     """Register email template variable schemas for booking events."""
     try:
-        from plugins.email.booking.services.event_context_registry import (
-            EventContextRegistry,
+        from plugins.email.src.services.event_context_registry import (
+            register as register_event_context,
         )
     except ImportError:
         return
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_CREATED,
         {
             "description": "Sent when a new booking is created",
@@ -38,7 +38,7 @@ def register_email_contexts():
         },
     )
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_CONFIRMED,
         {
             "description": "Sent when booking payment is authorized",
@@ -55,7 +55,7 @@ def register_email_contexts():
         },
     )
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_CANCELLED,
         {
             "description": "Sent when user cancels a booking",
@@ -69,7 +69,7 @@ def register_email_contexts():
         },
     )
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_CANCELLED_BY_PROVIDER,
         {
             "description": "Sent when provider cancels — always 100% refund",
@@ -82,7 +82,7 @@ def register_email_contexts():
         },
     )
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_COMPLETED,
         {
             "description": "Sent when booking time passes and payment is charged",
@@ -94,7 +94,7 @@ def register_email_contexts():
         },
     )
 
-    EventContextRegistry.register(
+    register_event_context(
         BOOKING_REMINDER,
         {
             "description": "Reminder sent before a booking",

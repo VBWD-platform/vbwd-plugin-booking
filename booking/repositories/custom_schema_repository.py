@@ -16,11 +16,7 @@ class CustomSchemaRepository:
         return self.session.get(BookingCustomSchema, schema_id)
 
     def find_by_slug(self, slug):
-        return (
-            self.session.query(BookingCustomSchema)
-            .filter_by(slug=slug)
-            .first()
-        )
+        return self.session.query(BookingCustomSchema).filter_by(slug=slug).first()
 
     def save(self, schema):
         self.session.add(schema)

@@ -231,9 +231,7 @@ class TestResourceSchemaRelation:
         assert resource_data["resource_type_name"] == "Doctor"
         assert resource_data["custom_fields_schema"][0]["id"] == "symptoms"
 
-    def test_resource_without_schema_shows_unclassified(
-        self, client, db, auth_headers
-    ):
+    def test_resource_without_schema_shows_unclassified(self, client, db, auth_headers):
         resource_resp = client.post(
             "/api/v1/admin/booking/resources",
             json={

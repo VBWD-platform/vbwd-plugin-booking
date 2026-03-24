@@ -86,6 +86,13 @@ class AvailabilityService:
                     current_dt += slot_duration + buffer
                     continue
 
+                # Check if slot is manually blocked
+                if self._is_slot_blocked(
+                    resource.id, target_date, current_dt.strftime("%H:%M")
+                ):
+                    current_dt += slot_duration + buffer
+                    continue
+
                 # Count existing bookings for this slot
                 booked_count = self.booking_repository.count_by_resource_and_slot(
                     resource.id, current_dt, slot_end_dt
@@ -104,6 +111,28 @@ class AvailabilityService:
                 current_dt += slot_duration + buffer
 
         return slots
+
+    @staticmethod
+    def _is_slot_blocked(resource_id, target_date: date, start_time: str) -> bool:
+        """Check if a slot is manually blocked."""
+        try:
+            from vbwd.extensions import db
+            from plugins.booking.booking.models.slot_block import (
+                BookableResourceSlotBlock,
+            )
+
+            return (
+                db.session.query(BookableResourceSlotBlock)
+                .filter_by(
+                    resource_id=resource_id,
+                    date=target_date,
+                    start_time=start_time,
+                )
+                .first()
+                is not None
+            )
+        except Exception:
+            return False
 
     def _get_flexible_availability(self, resource, target_date, time_windows):
         """For flexible-duration resources (hotels): check if day is available."""

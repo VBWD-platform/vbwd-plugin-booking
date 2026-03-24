@@ -37,11 +37,44 @@ class Booking(BaseModel):
 
     resource = db.relationship("BookableResource", backref="bookings", lazy="selectin")
 
+    def _resolve_customer(self) -> dict:
+        """Resolve customer name and email from user_id."""
+        try:
+            from vbwd.models.user import User
+            from vbwd.models.user_details import UserDetails
+
+            user = db.session.get(User, self.user_id)
+            if not user:
+                return {"email": "", "name": ""}
+
+            details = (
+                db.session.query(UserDetails).filter_by(user_id=self.user_id).first()
+            )
+            if details and details.first_name:
+                name = f"{details.first_name} {details.last_name or ''}".strip()
+            else:
+                name = user.email
+
+            return {
+                "email": user.email,
+                "name": name,
+                "phone": getattr(details, "phone", None) or "",
+                "company": getattr(details, "company", None) or "",
+            }
+        except Exception:
+            pass
+        return {"email": "", "name": "", "phone": "", "company": ""}
+
     def to_dict(self) -> dict:
+        customer = self._resolve_customer()
         return {
             "id": str(self.id),
             "resource_id": str(self.resource_id),
             "user_id": str(self.user_id),
+            "customer_email": customer["email"],
+            "customer_name": customer["name"],
+            "customer_phone": customer.get("phone", ""),
+            "customer_company": customer.get("company", ""),
             "invoice_id": str(self.invoice_id) if self.invoice_id else None,
             "start_at": self.start_at.isoformat() if self.start_at else None,
             "end_at": self.end_at.isoformat() if self.end_at else None,

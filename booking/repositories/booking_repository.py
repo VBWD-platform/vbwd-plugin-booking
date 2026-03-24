@@ -2,6 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import and_
+from vbwd.utils.datetime_utils import utcnow
 
 from plugins.booking.booking.models.booking import Booking
 
@@ -69,6 +70,23 @@ class BookingRepository:
             )
             .count()
         )
+
+    def find_past_confirmed(self):
+        """Find confirmed bookings whose end_at is in the past."""
+        return (
+            self.session.query(Booking)
+            .filter(
+                and_(
+                    Booking.status == "confirmed",
+                    Booking.end_at < utcnow(),
+                )
+            )
+            .all()
+        )
+
+    def find_by_invoice_id(self, invoice_id):
+        """Find all bookings linked to a specific invoice."""
+        return self.session.query(Booking).filter_by(invoice_id=invoice_id).all()
 
     def save(self, booking):
         self.session.add(booking)

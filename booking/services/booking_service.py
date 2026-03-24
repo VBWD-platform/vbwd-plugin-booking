@@ -1,4 +1,5 @@
 """BookingService — create, cancel, complete bookings."""
+import os
 from datetime import datetime
 
 from plugins.booking.booking.repositories.booking_repository import BookingRepository
@@ -8,6 +9,8 @@ from plugins.booking.booking.services.booking_invoice_service import (
     BookingInvoiceService,
 )
 from plugins.booking.booking.models.booking import Booking
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8080")
 
 
 class BookingError(Exception):
@@ -30,6 +33,15 @@ class BookingService:
         self.availability_service = availability_service
         self.invoice_service = invoice_service
         self.event_bus = event_bus
+
+    def _resolve_user(self, user_id) -> tuple[str, str]:
+        """Return (user_email, user_name) for a user_id."""
+        from vbwd.models.user import User
+
+        user = self.booking_repository.session.get(User, user_id)
+        if not user:
+            return ("", "")
+        return (user.email, user.email)
 
     def create_booking(
         self,
@@ -80,14 +92,18 @@ class BookingService:
 
         # Publish event
         if self.event_bus:
+            user_email, user_name = self._resolve_user(user_id)
             self.event_bus.publish(
                 "booking.created",
                 {
                     "user_id": str(user_id),
+                    "user_email": user_email,
+                    "user_name": user_name,
                     "booking_id": str(booking.id),
                     "resource_name": resource.name,
                     "start_at": start_at.isoformat(),
                     "end_at": end_at.isoformat(),
+                    "booking_url": f"{FRONTEND_URL}/dashboard/bookings/{booking.id}",
                 },
             )
 
@@ -106,13 +122,17 @@ class BookingService:
 
         if self.event_bus:
             resource = self.resource_repository.find_by_id(booking.resource_id)
+            user_email, user_name = self._resolve_user(booking.user_id)
             self.event_bus.publish(
                 "booking.cancelled",
                 {
                     "user_id": str(booking.user_id),
+                    "user_email": user_email,
+                    "user_name": user_name,
                     "booking_id": str(booking.id),
                     "resource_name": resource.name if resource else "Unknown",
                     "cancelled_by": cancelled_by,
+                    "dashboard_url": f"{FRONTEND_URL}/dashboard/bookings",
                 },
             )
 
@@ -131,13 +151,17 @@ class BookingService:
 
         if self.event_bus:
             resource = self.resource_repository.find_by_id(booking.resource_id)
+            user_email, user_name = self._resolve_user(booking.user_id)
             self.event_bus.publish(
                 "booking.cancelled_by_provider",
                 {
                     "user_id": str(booking.user_id),
+                    "user_email": user_email,
+                    "user_name": user_name,
                     "booking_id": str(booking.id),
                     "resource_name": resource.name if resource else "Unknown",
                     "reason": reason,
+                    "dashboard_url": f"{FRONTEND_URL}/dashboard/bookings",
                 },
             )
 
@@ -158,12 +182,19 @@ class BookingService:
 
         if self.event_bus:
             resource = self.resource_repository.find_by_id(booking.resource_id)
+            user_email, user_name = self._resolve_user(booking.user_id)
             self.event_bus.publish(
                 "booking.completed",
                 {
                     "user_id": str(booking.user_id),
+                    "user_email": user_email,
+                    "user_name": user_name,
                     "booking_id": str(booking.id),
                     "resource_name": resource.name if resource else "Unknown",
+                    "invoice_id": str(booking.invoice_id)
+                    if booking.invoice_id
+                    else None,
+                    "dashboard_url": f"{FRONTEND_URL}/dashboard/bookings",
                 },
             )
 

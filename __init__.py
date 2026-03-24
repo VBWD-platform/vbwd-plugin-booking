@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "invoice_prefix": "BK",
     "enable_recurring_bookings": False,
     "max_bookings_per_user_per_day": 5,
+    "capture_mode": "manual",
 }
 
 
@@ -44,3 +45,41 @@ class BookingPlugin(BasePlugin):
         from plugins.booking.booking.events import register_email_contexts
 
         register_email_contexts()
+
+    def register_event_handlers(self, event_bus):
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        from vbwd.extensions import db
+        from plugins.booking.booking.repositories.booking_repository import (
+            BookingRepository,
+        )
+        from plugins.booking.booking.repositories.resource_repository import (
+            ResourceRepository,
+        )
+        from plugins.booking.booking.handlers.payment_handler import (
+            BookingPaymentHandler,
+        )
+
+        handler = BookingPaymentHandler(
+            session=db.session,
+            booking_repository=BookingRepository(db.session),
+            resource_repository=ResourceRepository(db.session),
+            event_bus=event_bus,
+        )
+        event_bus.subscribe("invoice.paid", handler.on_invoice_paid)
+        event_bus.subscribe("invoice.refunded", handler.on_invoice_refunded)
+        logger.info(
+            "[booking] Event handlers registered (invoice.paid, invoice.refunded)"
+        )
+
+        # Auto-capture: when booking completes, capture authorized payment
+        from flask import current_app
+
+        container = getattr(current_app, "container", None)
+        if container:
+            from vbwd.handlers.auto_capture_handler import AutoCaptureHandler
+
+            auto_capture = AutoCaptureHandler(container)
+            event_bus.subscribe("booking.completed", auto_capture.on_booking_completed)

@@ -70,6 +70,13 @@ def db(app):
     import plugins.booking.booking.models.resource  # noqa: F401
     import plugins.booking.booking.models.resource_category  # noqa: F401
     import plugins.booking.booking.models.booking  # noqa: F401
+    import plugins.booking.booking.models.resource_image  # noqa: F401
+    import plugins.booking.booking.models.slot_block  # noqa: F401
+
+    try:
+        import plugins.email.src.models.email_template  # noqa: F401
+    except ImportError:
+        pass
 
     with app.app_context():
         db.create_all()
@@ -78,6 +85,22 @@ def db(app):
 
         seeder = TestDataSeeder(db.session)
         seeder.seed()
+
+        # Deduplicate event bus subscribers (module singleton accumulates across tests)
+        from vbwd.events.bus import event_bus
+
+        for event_name in list(event_bus._subscribers.keys()):
+            seen = set()
+            unique = []
+            for callback in event_bus._subscribers[event_name]:
+                key = f"{callback.__module__}.{callback.__qualname__}"
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(callback)
+            event_bus._subscribers[event_name] = unique
+
         yield db
+
+        db.session.rollback()
         db.session.remove()
         db.drop_all()

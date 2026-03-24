@@ -1,0 +1,123 @@
+{
+  "tabs": [
+    {
+      "id": "general",
+      "label": "General",
+      "fields": [
+        {
+          "key": "default_timezone",
+          "label": "Default Timezone",
+          "component": "input",
+          "inputType": "text",
+          "description": "Default timezone for booking schedule display (e.g., Europe/Berlin)"
+        },
+        {
+          "key": "default_confirmation_mode",
+          "label": "Confirmation Mode",
+          "component": "select",
+          "options": [
+            { "value": "auto", "label": "Auto (instant confirmation)" },
+            { "value": "manual", "label": "Manual (admin approval)" }
+          ],
+          "description": "Default booking confirmation mode for new resources"
+        },
+        {
+          "key": "invoice_prefix",
+          "label": "Invoice Prefix",
+          "component": "input",
+          "inputType": "text",
+          "description": "Prefix for booking invoice numbers (e.g., BK-A1B2C3D4)"
+        },
+        {
+          "key": "booking_form_slug",
+          "label": "Booking Form Page Slug",
+          "component": "input",
+          "inputType": "text",
+          "description": "CMS page slug for the booking form (used by Book Now button)"
+        },
+        {
+          "key": "capture_mode",
+          "label": "Payment Capture Mode",
+          "component": "select",
+          "options": [
+            { "value": "manual", "label": "Manual (authorize only, charge later)" },
+            { "value": "auto", "label": "Auto (charge immediately)" }
+          ],
+          "description": "Manual: holds funds on card, admin charges later. Auto: charges immediately on checkout."
+        }
+      ]
+    },
+    {
+      "id": "limits",
+      "label": "Limits",
+      "fields": [
+        {
+          "key": "max_advance_booking_days",
+          "label": "Max Advance Booking (days)",
+          "component": "input",
+          "inputType": "number",
+          "min": 1,
+          "max": 730,
+          "description": "Maximum number of days in advance a user can book"
+        },
+        {
+          "key": "min_lead_time_hours",
+          "label": "Min Lead Time (hours)",
+          "component": "input",
+          "inputType": "number",
+          "min": 0,
+          "max": 168,
+          "description": "Minimum hours before a slot starts that booking is allowed"
+        },
+        {
+          "key": "cancellation_grace_period_hours",
+          "label": "Cancellation Grace Period (hours)",
+          "component": "input",
+          "inputType": "number",
+          "min": 0,
+          "max": 168,
+          "description": "Hours before booking start when free cancellation is allowed"
+        },
+        {
+          "key": "max_bookings_per_user_per_day",
+          "label": "Max Bookings per User per Day",
+          "component": "input",
+          "inputType": "number",
+          "min": 1,
+          "max": 100,
+          "description": "Maximum bookings a single user can make per day"
+        }
+      ]
+    },
+    {
+      "id": "defaults",
+      "label": "Defaults",
+      "fields": [
+        {
+          "key": "default_slot_duration_minutes",
+          "label": "Default Slot Duration (minutes)",
+          "component": "input",
+          "inputType": "number",
+          "min": 5,
+          "max": 1440,
+          "description": "Default slot duration in minutes for new resources"
+        },
+        {
+          "key": "default_buffer_minutes",
+          "label": "Default Buffer (minutes)",
+          "component": "input",
+          "inputType": "number",
+          "min": 0,
+          "max": 120,
+          "description": "Default buffer time between consecutive slots"
+        },
+        {
+          "key": "enable_recurring_bookings",
+          "label": "Enable Recurring Bookings",
+          "component": "checkbox",
+          "description": "Allow users to create recurring bookings"
+        }
+      ]
+    }
+  ]
+}

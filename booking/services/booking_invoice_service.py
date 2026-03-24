@@ -41,10 +41,69 @@ class BookingInvoiceService:
             "booking_id": str(booking.id),
             "resource_slug": resource.slug,
             "resource_name": resource.name,
-            "resource_type": resource.custom_schema.slug if resource.custom_schema else "unclassified",
+            "resource_type": resource.custom_schema.slug
+            if resource.custom_schema
+            else "unclassified",
             "start_at": booking.start_at.isoformat(),
             "end_at": booking.end_at.isoformat(),
             "custom_fields": booking.custom_fields or {},
+        }
+        self.session.add(line_item)
+        self.session.flush()
+
+        return invoice
+
+    def create_checkout_invoice(
+        self,
+        user_id,
+        resource,
+        start_at,
+        end_at,
+        quantity: int = 1,
+        custom_fields: dict | None = None,
+        notes: str | None = None,
+    ) -> UserInvoice:
+        """Create an invoice for booking checkout — no Booking record needed yet.
+
+        All booking metadata is stored in line_item.extra_data so the
+        payment handler can create the Booking after payment succeeds.
+        """
+        total_amount = resource.price * quantity
+
+        invoice = UserInvoice()
+        invoice.user_id = user_id
+        invoice.invoice_number = f"{self.invoice_prefix}-{uuid.uuid4().hex[:8].upper()}"
+        invoice.amount = total_amount
+        invoice.currency = resource.currency or "EUR"
+        invoice.status = InvoiceStatus.PENDING
+        invoice.invoiced_at = datetime.utcnow()
+        self.session.add(invoice)
+        self.session.flush()
+
+        line_item = InvoiceLineItem()
+        line_item.invoice_id = invoice.id
+        line_item.item_type = LineItemType.CUSTOM
+        line_item.item_id = resource.id
+        line_item.description = (
+            f"{resource.name} — {start_at.strftime('%Y-%m-%d %H:%M')}"
+        )
+        line_item.quantity = quantity
+        line_item.unit_price = resource.price
+        line_item.total_price = total_amount
+        line_item.extra_data = {
+            "plugin": "booking",
+            "resource_slug": resource.slug,
+            "resource_name": resource.name,
+            "resource_type": (
+                resource.custom_schema.slug
+                if resource.custom_schema
+                else "unclassified"
+            ),
+            "start_at": start_at.isoformat(),
+            "end_at": end_at.isoformat(),
+            "quantity": quantity,
+            "custom_fields": custom_fields or {},
+            "notes": notes,
         }
         self.session.add(line_item)
         self.session.flush()
