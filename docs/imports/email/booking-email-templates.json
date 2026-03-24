@@ -1,0 +1,44 @@
+[
+  {
+    "event_type": "booking.created",
+    "subject": "Booking confirmed — {{ resource_name }}",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#27ae60;\">Booking confirmed</h1><p>Hi {{ user_name }},</p><p>Your booking for <strong>{{ resource_name }}</strong> has been confirmed.</p><ul><li>Start: {{ start_at }}</li><li>End: {{ end_at }}</li></ul><p><a href=\"{{ booking_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View Booking</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} is confirmed.\nStart: {{ start_at }}\nEnd: {{ end_at }}\n\nView: {{ booking_url }}",
+    "is_active": true
+  },
+  {
+    "event_type": "booking.confirmed",
+    "subject": "Payment authorized — {{ resource_name }}",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#3498db;\">Payment authorized</h1><p>Hi {{ user_name }},</p><p>Your payment for <strong>{{ resource_name }}</strong> has been authorized. Your booking will be confirmed once the service is completed.</p><ul><li>Start: {{ start_at }}</li><li>End: {{ end_at }}</li></ul><p><a href=\"{{ booking_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View Booking</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nYour payment for {{ resource_name }} has been authorized.\nStart: {{ start_at }}\nEnd: {{ end_at }}\n\nView: {{ booking_url }}",
+    "is_active": true
+  },
+  {
+    "event_type": "booking.cancelled",
+    "subject": "Booking cancelled — {{ resource_name }}",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#e74c3c;\">Booking cancelled</h1><p>Hi {{ user_name }},</p><p>Your booking for <strong>{{ resource_name }}</strong> has been cancelled.</p><p><a href=\"{{ dashboard_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View My Bookings</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} has been cancelled.\n\nView bookings: {{ dashboard_url }}",
+    "is_active": true
+  },
+  {
+    "event_type": "booking.cancelled_by_provider",
+    "subject": "Booking cancelled by provider — {{ resource_name }}",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#e74c3c;\">Booking cancelled by provider</h1><p>Hi {{ user_name }},</p><p>Your booking for <strong>{{ resource_name }}</strong> was cancelled by the provider.</p><p>Reason: {{ reason }}</p><p>A full refund will be issued.</p><p><a href=\"{{ dashboard_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View My Bookings</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} was cancelled.\nReason: {{ reason }}\nA full refund will be issued.\n\nView bookings: {{ dashboard_url }}",
+    "is_active": true
+  },
+  {
+    "event_type": "booking.completed",
+    "subject": "Booking completed — {{ resource_name }}",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#2c3e50;\">Booking completed</h1><p>Hi {{ user_name }},</p><p>Your booking for <strong>{{ resource_name }}</strong> has been completed. Thank you!</p><p><a href=\"{{ dashboard_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View My Bookings</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nYour booking for {{ resource_name }} has been completed. Thank you!\n\nView bookings: {{ dashboard_url }}",
+    "is_active": true
+  },
+  {
+    "event_type": "booking.reminder",
+    "subject": "Reminder: {{ resource_name }} in {{ hours_until }} hours",
+    "html_body": "<!DOCTYPE html><html><body style=\"font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;\"><h1 style=\"color:#f39c12;\">Booking reminder</h1><p>Hi {{ user_name }},</p><p>Your booking for <strong>{{ resource_name }}</strong> starts in <strong>{{ hours_until }} hours</strong>.</p><ul><li>Start: {{ start_at }}</li></ul><p><a href=\"{{ dashboard_url }}\" style=\"background:#3498db;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;\">View My Bookings</a></p></body></html>",
+    "text_body": "Hi {{ user_name }},\n\nReminder: Your booking for {{ resource_name }} starts in {{ hours_until }} hours.\nStart: {{ start_at }}\n\nView bookings: {{ dashboard_url }}",
+    "is_active": true
+  }
+]
