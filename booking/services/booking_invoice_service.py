@@ -39,6 +39,7 @@ class BookingInvoiceService:
         line_item.extra_data = {
             "plugin": "booking",
             "booking_id": str(booking.id),
+            "resource_id": str(resource.id),
             "resource_slug": resource.slug,
             "resource_name": resource.name,
             "resource_type": resource.custom_schema.slug
@@ -92,6 +93,7 @@ class BookingInvoiceService:
         line_item.total_price = total_amount
         line_item.extra_data = {
             "plugin": "booking",
+            "resource_id": str(resource.id),
             "resource_slug": resource.slug,
             "resource_name": resource.name,
             "resource_type": (

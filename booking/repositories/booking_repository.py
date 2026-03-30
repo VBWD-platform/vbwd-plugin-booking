@@ -90,9 +90,9 @@ class BookingRepository:
 
     def save(self, booking):
         self.session.add(booking)
-        self.session.flush()
+        self.session.commit()
         return booking
 
     def delete(self, booking):
         self.session.delete(booking)
-        self.session.flush()
+        self.session.commit()

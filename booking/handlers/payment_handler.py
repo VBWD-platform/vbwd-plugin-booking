@@ -94,8 +94,12 @@ class BookingPaymentHandler:
 
             self._get_booking_repo().save(booking)
 
-            # Write booking_id back to line item metadata
-            line_item.extra_data = {**extra, "booking_id": str(booking.id)}
+            # Write booking_id and resource_id back to line item metadata
+            line_item.extra_data = {
+                **extra,
+                "booking_id": str(booking.id),
+                "resource_id": str(resource.id),
+            }
 
             if self.event_bus:
                 user_email, user_name = self._resolve_user(invoice.user_id)
