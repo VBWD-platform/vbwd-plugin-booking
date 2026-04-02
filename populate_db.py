@@ -829,6 +829,33 @@ def populate(force=False):
         )
         print(f"  {'Created' if created else 'Exists'}: /{CANCEL_LAYOUT_SLUG}")
 
+        # Add "Booking" to header-nav menu if not exists
+        if header_nav:
+            try:
+                from plugins.cms.src.models.cms_menu_item import CmsMenuItem
+                booking_exists = (
+                    db.session.query(CmsMenuItem)
+                    .filter_by(widget_id=header_nav.id, page_slug="booking")
+                    .first()
+                )
+                if not booking_exists:
+                    from uuid import uuid4 as uuid4_gen
+                    existing_count = (
+                        db.session.query(CmsMenuItem)
+                        .filter_by(widget_id=header_nav.id)
+                        .count()
+                    )
+                    db.session.add(CmsMenuItem(
+                        id=uuid4_gen(),
+                        widget_id=header_nav.id,
+                        label="Booking",
+                        page_slug="booking",
+                        sort_order=existing_count,
+                    ))
+                    print("  Added 'Booking' to header-nav menu")
+            except ImportError:
+                pass
+
         db.session.commit()
     except ImportError:
         print("  ! CMS plugin not installed — skipping CMS setup")

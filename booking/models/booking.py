@@ -17,13 +17,13 @@ class Booking(BaseModel):
     )
     user_id = db.Column(
         UUID(as_uuid=True),
-        db.ForeignKey("user.id"),
+        db.ForeignKey("vbwd_user.id"),
         nullable=False,
         index=True,
     )
     invoice_id = db.Column(
         UUID(as_uuid=True),
-        db.ForeignKey("user_invoice.id"),
+        db.ForeignKey("vbwd_user_invoice.id"),
         nullable=True,
         index=True,
     )

@@ -25,7 +25,7 @@ class BookableResourceSlotBlock(BaseModel):
     reason = db.Column(db.String(255), nullable=True)
     blocked_by = db.Column(
         UUID(as_uuid=True),
-        db.ForeignKey("user.id"),
+        db.ForeignKey("vbwd_user.id"),
         nullable=True,
     )
 
