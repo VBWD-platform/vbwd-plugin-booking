@@ -22,7 +22,7 @@ class TestSetupCheck:
         from sqlalchemy import text
 
         result = db.session.execute(
-            text("SELECT email FROM \"user\" WHERE email = 'admin@example.com'")
+            text("SELECT email FROM \"vbwd_user\" WHERE email = 'admin@example.com'")
         )
         assert result.scalar() == "admin@example.com"
 

@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, jsonify, request, g
 
 from vbwd.extensions import db
-from vbwd.middleware.auth import require_auth, require_admin
+from vbwd.middleware.auth import require_auth, require_admin, require_permission
 
 from plugins.booking.booking.repositories.resource_category_repository import (
     ResourceCategoryRepository,
@@ -213,6 +213,7 @@ def cancel_booking(booking_id):
 @booking_bp.route("/api/v1/admin/booking/bookings", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.bookings.manage")
 def admin_create_booking():
     """Admin-only: create a booking directly (bypasses checkout/payment)."""
     data = request.get_json()
@@ -249,6 +250,7 @@ def admin_create_booking():
 @booking_bp.route("/api/v1/admin/booking/categories", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_list_categories():
     categories = _category_repo().find_all(active_only=False)
     return jsonify({"categories": [category.to_dict() for category in categories]})
@@ -257,6 +259,7 @@ def admin_list_categories():
 @booking_bp.route("/api/v1/admin/booking/categories", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_create_category():
     data = request.get_json()
     if not data or not data.get("name") or not data.get("slug"):
@@ -284,6 +287,7 @@ def admin_create_category():
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_get_category(category_id):
     category = _category_repo().find_by_id(category_id)
     if not category:
@@ -294,6 +298,7 @@ def admin_get_category(category_id):
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["PUT"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_update_category(category_id):
     category = _category_repo().find_by_id(category_id)
     if not category:
@@ -320,6 +325,7 @@ def admin_update_category(category_id):
 @booking_bp.route("/api/v1/admin/booking/categories/<category_id>", methods=["DELETE"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_delete_category(category_id):
     category = _category_repo().find_by_id(category_id)
     if not category:
@@ -335,6 +341,7 @@ def admin_delete_category(category_id):
 @booking_bp.route("/api/v1/admin/booking/schemas", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_list_schemas():
     schemas = _schema_repo().find_all(active_only=False)
     return jsonify({"schemas": [schema.to_dict() for schema in schemas]})
@@ -343,6 +350,7 @@ def admin_list_schemas():
 @booking_bp.route("/api/v1/admin/booking/schemas", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_create_schema():
     data = request.get_json()
     if not data or not data.get("name") or not data.get("slug"):
@@ -365,6 +373,7 @@ def admin_create_schema():
 @booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_get_schema(schema_id):
     schema = _schema_repo().find_by_id(schema_id)
     if not schema:
@@ -375,6 +384,7 @@ def admin_get_schema(schema_id):
 @booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["PUT"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_update_schema(schema_id):
     schema = _schema_repo().find_by_id(schema_id)
     if not schema:
@@ -392,6 +402,7 @@ def admin_update_schema(schema_id):
 @booking_bp.route("/api/v1/admin/booking/schemas/<schema_id>", methods=["DELETE"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_delete_schema(schema_id):
     schema = _schema_repo().find_by_id(schema_id)
     if not schema:
@@ -413,6 +424,7 @@ def list_schemas():
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_list_resources():
     resources = _resource_repo().find_all(active_only=False)
     return jsonify({"resources": [resource.to_dict() for resource in resources]})
@@ -421,6 +433,7 @@ def admin_list_resources():
 @booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_get_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
     if not resource:
@@ -431,6 +444,7 @@ def admin_get_resource(resource_id):
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_create_resource():
     data = request.get_json()
     if not data:
@@ -471,6 +485,7 @@ def admin_create_resource():
 @booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["PUT"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_update_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
     if not resource:
@@ -505,6 +520,7 @@ def admin_update_resource(resource_id):
 @booking_bp.route("/api/v1/admin/booking/resources/<resource_id>", methods=["DELETE"])
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_delete_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
     if not resource:
@@ -517,6 +533,7 @@ def admin_delete_resource(resource_id):
 @booking_bp.route("/api/v1/admin/booking/bookings", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.bookings.view")
 def admin_list_bookings():
     from plugins.booking.booking.models.booking import Booking
 
@@ -537,6 +554,7 @@ def admin_list_bookings():
 @booking_bp.route("/api/v1/admin/booking/bookings/<booking_id>", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.bookings.view")
 def admin_get_booking(booking_id):
     booking = _booking_service().get_booking(booking_id)
     if not booking:
@@ -547,6 +565,7 @@ def admin_get_booking(booking_id):
 @booking_bp.route("/api/v1/admin/booking/bookings/<booking_id>", methods=["PUT"])
 @require_auth
 @require_admin
+@require_permission("booking.bookings.manage")
 def admin_update_booking(booking_id):
     booking = _booking_service().get_booking(booking_id)
     if not booking:
@@ -565,6 +584,7 @@ def admin_update_booking(booking_id):
 @booking_bp.route("/api/v1/admin/booking/dashboard", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.bookings.view")
 def admin_dashboard():
     from plugins.booking.booking.models.booking import Booking
     from sqlalchemy import func
@@ -629,6 +649,7 @@ def _export_rule_repo():
 @booking_bp.route("/api/v1/admin/booking/export/<entity>", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_export(entity):
     export_format = request.args.get("format", "csv")
     service = _export_service()
@@ -667,6 +688,7 @@ def admin_export(entity):
 @booking_bp.route("/api/v1/admin/booking/import/<entity>", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_import(entity):
     if "file" not in request.files:
         return jsonify({"error": "file upload required"}), 400
@@ -693,6 +715,7 @@ def admin_import(entity):
 @booking_bp.route("/api/v1/admin/booking/export-rules", methods=["GET"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_list_export_rules():
     rules = _export_rule_repo().find_all()
     return jsonify({"rules": [rule.to_dict() for rule in rules]})
@@ -701,6 +724,7 @@ def admin_list_export_rules():
 @booking_bp.route("/api/v1/admin/booking/export-rules", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_create_export_rule():
     data = request.get_json()
     if not data:
@@ -728,6 +752,7 @@ def admin_create_export_rule():
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["PUT"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_update_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)
     if not rule:
@@ -756,6 +781,7 @@ def admin_update_export_rule(rule_id):
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>", methods=["DELETE"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_delete_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)
     if not rule:
@@ -768,6 +794,7 @@ def admin_delete_export_rule(rule_id):
 @booking_bp.route("/api/v1/admin/booking/export-rules/<rule_id>/test", methods=["POST"])
 @require_auth
 @require_admin
+@require_permission("booking.configure")
 def admin_test_export_rule(rule_id):
     rule = _export_rule_repo().find_by_id(rule_id)
     if not rule:
@@ -818,6 +845,7 @@ def _cms_available():
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_list_resource_images(resource_id):
     if not _cms_available():
         return jsonify({"error": "CMS plugin required for image gallery"}), 501
@@ -840,6 +868,7 @@ def admin_list_resource_images(resource_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_upload_resource_image(resource_id):
     if not _cms_available():
         return jsonify({"error": "CMS plugin required for image gallery"}), 501
@@ -894,6 +923,7 @@ def admin_upload_resource_image(resource_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_set_primary_image(resource_id, image_id):
     from plugins.booking.booking.models.resource_image import (
         BookableResourceImage,
@@ -924,6 +954,7 @@ def admin_set_primary_image(resource_id, image_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_reorder_resource_images(resource_id):
     from plugins.booking.booking.models.resource_image import (
         BookableResourceImage,
@@ -948,6 +979,7 @@ def admin_reorder_resource_images(resource_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_delete_resource_image(resource_id, image_id):
     from plugins.booking.booking.models.resource_image import (
         BookableResourceImage,
@@ -988,6 +1020,7 @@ def admin_delete_resource_image(resource_id, image_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.view")
 def admin_get_schedule(resource_id):
     """Get schedule for a date range: generated slots + bookings + blocks."""
     from plugins.booking.booking.models.slot_block import (
@@ -1176,6 +1209,7 @@ def admin_get_schedule(resource_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_block_slot(resource_id):
     from plugins.booking.booking.models.slot_block import (
         BookableResourceSlotBlock,
@@ -1204,6 +1238,7 @@ def admin_block_slot(resource_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_unblock_slot(resource_id, block_id):
     from plugins.booking.booking.models.slot_block import (
         BookableResourceSlotBlock,
@@ -1228,6 +1263,7 @@ def admin_unblock_slot(resource_id, block_id):
 )
 @require_auth
 @require_admin
+@require_permission("booking.resources.manage")
 def admin_copy_schedule(resource_id):
     source = _resource_repo().find_by_id(resource_id)
     if not source:

@@ -592,7 +592,7 @@ class TestAdminOperations:
         from sqlalchemy import text
 
         result = db.session.execute(
-            text("SELECT id FROM \"user\" WHERE email = 'test@example.com'")
+            text("SELECT id FROM \"vbwd_user\" WHERE email = 'test@example.com'")
         )
         user_id = str(result.scalar())
 
