@@ -44,12 +44,36 @@ class BookingPlugin(BasePlugin):
     @property
     def admin_permissions(self):
         return [
-            {"key": "booking.resources.view", "label": "View resources", "group": "Booking"},
-            {"key": "booking.resources.manage", "label": "Manage resources", "group": "Booking"},
-            {"key": "booking.bookings.view", "label": "View bookings", "group": "Booking"},
-            {"key": "booking.bookings.manage", "label": "Manage bookings", "group": "Booking"},
-            {"key": "booking.schemas.manage", "label": "Manage schemas", "group": "Booking"},
-            {"key": "booking.configure", "label": "Booking settings", "group": "Booking"},
+            {
+                "key": "booking.resources.view",
+                "label": "View resources",
+                "group": "Booking",
+            },
+            {
+                "key": "booking.resources.manage",
+                "label": "Manage resources",
+                "group": "Booking",
+            },
+            {
+                "key": "booking.bookings.view",
+                "label": "View bookings",
+                "group": "Booking",
+            },
+            {
+                "key": "booking.bookings.manage",
+                "label": "Manage bookings",
+                "group": "Booking",
+            },
+            {
+                "key": "booking.schemas.manage",
+                "label": "Manage schemas",
+                "group": "Booking",
+            },
+            {
+                "key": "booking.configure",
+                "label": "Booking settings",
+                "group": "Booking",
+            },
         ]
 
     def on_enable(self):
