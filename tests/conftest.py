@@ -55,6 +55,10 @@ def app():
     limiter.reset()
     yield app
 
+    with app.app_context():
+        from vbwd.extensions import db as _db
+        _db.engine.dispose()
+
 
 @pytest.fixture
 def client(app):
