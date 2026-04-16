@@ -79,6 +79,11 @@ def db(app):
     import plugins.booking.booking.models.slot_block  # noqa: F401
 
     try:
+        import plugins.cms.src.models  # noqa: F401
+    except ImportError:
+        pass
+
+    try:
         import plugins.email.src.models.email_template  # noqa: F401
     except ImportError:
         pass
