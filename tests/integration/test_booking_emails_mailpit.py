@@ -24,9 +24,16 @@ import time
 import pytest
 import requests
 
+try:
+    from plugins.email.src.handlers import register_handlers
+    from plugins.email.src.models.email_template import EmailTemplate
+except ImportError:
+    pytest.skip(
+        "Email plugin not installed — skipping mailpit tests",
+        allow_module_level=True,
+    )
+
 from vbwd.events.bus import EventBus
-from plugins.email.src.handlers import register_handlers
-from plugins.email.src.models.email_template import EmailTemplate
 
 # ── Mailpit config ────────────────────────────────────────────────────────────
 
