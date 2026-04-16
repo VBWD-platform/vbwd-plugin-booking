@@ -147,6 +147,24 @@ jobs:
         with:
           path: vbwd-backend/plugins/booking
 
+      - name: Clone backend dependencies (CMS, email, subscription)
+        run: |
+          for plugin in cms email subscription; do
+            git clone --depth=1 -q https://github.com/VBWD-platform/vbwd-plugin-${plugin}.git vbwd-backend/plugins/${plugin} || true
+          done
+
+      - name: Create backend plugins.json
+        run: |
+          python3 -c "
+          import json, os
+          plugins = {}
+          for d in os.listdir('vbwd-backend/plugins'):
+              if os.path.isfile(os.path.join('vbwd-backend/plugins', d, '__init__.py')):
+                  plugins[d] = {'enabled': True, 'version': '1.0.0', 'source': 'local'}
+          json.dump({'plugins': plugins}, open('vbwd-backend/plugins/plugins.json', 'w'))
+          print(f'plugins.json: {sorted(plugins.keys())}')
+          "
+
       - name: Start backend services
         working-directory: vbwd-backend
         run: docker compose up -d --build
@@ -159,9 +177,19 @@ jobs:
           done
           curl -sf http://localhost:5000/api/v1/health || exit 1
 
-      - name: Seed test data
+      - name: Run migrations + seed
         working-directory: vbwd-backend
-        run: docker compose exec -T api flask seed-test-data || true
+        run: |
+          docker compose exec -T api alembic upgrade head || true
+          docker compose exec -T api flask seed-test-data || docker compose exec -T api python -c "
+          import os; os.environ['TEST_DATA_SEED']='true'
+          from vbwd.app import create_app
+          app = create_app()
+          with app.app_context():
+              from vbwd.testing.test_data_seeder import TestDataSeeder
+              from vbwd.extensions import db
+              TestDataSeeder(db.session).seed()
+          " || true
 
       # ── Frontend ───────────────────────────────────────────────────────
       - name: Clone vbwd-fe-admin
@@ -197,7 +225,7 @@ jobs:
       - name: Install ALL fe-admin plugins
         working-directory: vbwd-fe-admin/plugins
         run: |
-          for entry in "analytics-widget:vbwd-fe-admin-plugin-analytics-widget" "cms-admin:vbwd-fe-admin-plugin-cms" "email-admin:vbwd-fe-admin-plugin-email" "ghrm-admin:vbwd-fe-admin-plugin-ghrm" "taro-admin:vbwd-fe-admin-plugin-taro"; do
+          for entry in "analytics-widget:vbwd-fe-admin-plugin-analytics-widget" "cms-admin:vbwd-fe-admin-plugin-cms" "email-admin:vbwd-fe-admin-plugin-email" "ghrm-admin:vbwd-fe-admin-plugin-ghrm" "taro-admin:vbwd-fe-admin-plugin-taro" "subscription-admin:vbwd-fe-admin-plugin-subscription" "shop-admin:vbwd-fe-admin-plugin-shop" "discount-admin:vbwd-fe-admin-plugin-discount"; do
             name="${entry%%:*}"; repo="${entry##*:}"
             [ -d "$name" ] && continue
             git clone --depth=1 -q "https://github.com/VBWD-platform/${repo}.git" "$name" 2>/dev/null || echo "Skipping $name"
