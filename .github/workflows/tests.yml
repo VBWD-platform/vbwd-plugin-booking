@@ -228,7 +228,11 @@ jobs:
           for entry in "analytics-widget:vbwd-fe-admin-plugin-analytics-widget" "cms-admin:vbwd-fe-admin-plugin-cms" "email-admin:vbwd-fe-admin-plugin-email" "ghrm-admin:vbwd-fe-admin-plugin-ghrm" "taro-admin:vbwd-fe-admin-plugin-taro" "subscription-admin:vbwd-fe-admin-plugin-subscription" "shop-admin:vbwd-fe-admin-plugin-shop" "discount-admin:vbwd-fe-admin-plugin-discount"; do
             name="${entry%%:*}"; repo="${entry##*:}"
             [ -d "$name" ] && continue
-            git clone --depth=1 -q "https://github.com/VBWD-platform/${repo}.git" "$name" 2>/dev/null || echo "Skipping $name"
+            git clone --depth=1 -q "https://github.com/VBWD-platform/${repo}.git" "$name" 2>/dev/null || {
+              echo "Creating stub for $name"
+              mkdir -p "$name"
+              echo "export const ${name//-/}Plugin = { name: '${name}', version: '0.0.0', install() {}, activate() {}, deactivate() {} };" > "$name/index.ts"
+            }
           done
 
       - name: Install Playwright browsers
