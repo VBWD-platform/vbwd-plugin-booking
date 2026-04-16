@@ -3,6 +3,7 @@ import csv
 import io
 import json
 from datetime import date
+from typing import Optional
 
 from plugins.booking.booking.repositories.resource_category_repository import (
     ResourceCategoryRepository,
@@ -57,9 +58,9 @@ class ExportService:
     def export_bookings(
         self,
         export_format: str = "csv",
-        date_from: date = None,
-        date_to: date = None,
-        status: str = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        status: Optional[str] = None,
     ) -> str:
         bookings = self.booking_repository.find_by_user(None)  # all bookings
         records = [booking.to_dict() for booking in bookings]
