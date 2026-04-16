@@ -88,6 +88,12 @@ jobs:
         with:
           path: vbwd-backend/plugins/booking
 
+      - name: Clone CMS plugin (booking resource_image FK depends on cms_image)
+        run: git clone --depth=1 -q https://github.com/VBWD-platform/vbwd-plugin-cms.git vbwd-backend/plugins/cms || true
+
+      - name: Clone email plugin (booking email tests depend on email plugin)
+        run: git clone --depth=1 -q https://github.com/VBWD-platform/vbwd-plugin-email.git vbwd-backend/plugins/email || true
+
       - name: Start services
         working-directory: vbwd-backend
         run: docker compose up -d --build
