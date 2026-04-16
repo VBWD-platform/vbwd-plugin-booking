@@ -77,7 +77,8 @@ class ExportRuleService:
                         error,
                     )
 
-        raise last_error
+        if last_error is not None:
+            raise last_error
 
     def _append_csv(self, rule, event_data: dict) -> None:
         """Append a row to a CSV file."""
