@@ -1,6 +1,7 @@
 """Booking plugin routes — public + admin."""
+import os
 from datetime import date, datetime, timedelta
-from flask import Blueprint, jsonify, request, g
+from flask import Blueprint, Response, current_app, jsonify, request, g
 
 from vbwd.extensions import db
 from vbwd.middleware.auth import require_auth, require_admin, require_permission
@@ -60,6 +61,39 @@ def _availability_service() -> AvailabilityService:
 
 
 # ── Public routes (auth required) ─────────────────────────────────────────────
+
+
+# User-relevant policy defaults — returned when the plugin instance is
+# absent (unreachable in prod, but keeps unit tests deterministic and
+# prevents a NoneType crash in a half-booted dev environment).
+_PUBLIC_CONFIG_DEFAULTS = {
+    "cancellation_grace_period_hours": 24,
+    "min_lead_time_hours": 1,
+    "max_advance_booking_days": 90,
+    "default_slot_duration_minutes": 60,
+}
+
+
+@booking_bp.route("/api/v1/booking/config", methods=["GET"])
+def public_booking_config():
+    """Return the policy values fe-user needs to gate cancel/reschedule UI.
+
+    Public on purpose — these values are not secrets and every unauthenticated
+    catalogue visitor may render against them.
+    """
+    plugin_manager = getattr(current_app, "plugin_manager", None)
+    booking_plugin = (
+        plugin_manager.get_plugin("booking") if plugin_manager is not None else None
+    )
+    if booking_plugin is None:
+        return jsonify({"error": "booking plugin not available"}), 503
+
+    return jsonify(
+        {
+            key: booking_plugin.get_config(key, default)
+            for key, default in _PUBLIC_CONFIG_DEFAULTS.items()
+        }
+    )
 
 
 @booking_bp.route("/api/v1/booking/categories", methods=["GET"])
@@ -178,11 +212,67 @@ def booking_checkout():
     )
 
 
+_LIST_BOOKINGS_MAX_PER_PAGE = 100
+_LIST_BOOKINGS_ALLOWED_STATUSES = {"upcoming", "past", "all"}
+
+
 @booking_bp.route("/api/v1/booking/bookings", methods=["GET"])
 @require_auth
 def list_user_bookings():
-    bookings = _booking_service().get_user_bookings(g.user_id)
-    return jsonify({"bookings": [booking.to_dict() for booking in bookings]})
+    """
+    List the authenticated user's bookings with optional status filter and
+    pagination.
+
+    Query params:
+      status   — "upcoming" | "past" | "all"  (default "all")
+      page     — 1-indexed page number       (default 1)
+      per_page — page size, max 100          (default 20)
+
+    Response: { bookings, page, per_page, total, total_pages }
+    """
+    status_filter = request.args.get("status", "all")
+    if status_filter not in _LIST_BOOKINGS_ALLOWED_STATUSES:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Invalid status filter; expected one of "
+                        f"{sorted(_LIST_BOOKINGS_ALLOWED_STATUSES)}"
+                    )
+                }
+            ),
+            400,
+        )
+
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        return jsonify({"error": "page must be an integer"}), 400
+    try:
+        per_page = int(request.args.get("per_page", "20"))
+    except ValueError:
+        return jsonify({"error": "per_page must be an integer"}), 400
+    per_page = max(1, min(per_page, _LIST_BOOKINGS_MAX_PER_PAGE))
+
+    booking_repo = BookingRepository(db.session)
+    bookings, total = booking_repo.find_by_user_paginated(
+        user_id=g.user_id,
+        status_filter=status_filter,
+        page=page,
+        per_page=per_page,
+    )
+    total_pages = (total + per_page - 1) // per_page if per_page else 0
+
+    return jsonify(
+        {
+            "bookings": [booking.to_dict() for booking in bookings],
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": total_pages,
+            "status": status_filter,
+        }
+    )
 
 
 @booking_bp.route("/api/v1/booking/bookings/<booking_id>", methods=["GET"])
@@ -205,6 +295,326 @@ def cancel_booking(booking_id):
         return jsonify(booking.to_dict())
     except BookingError as error:
         return jsonify({"error": str(error)}), 400
+
+
+def _company_context() -> dict:
+    config = current_app.config
+    return {
+        "name": config.get("COMPANY_NAME", "VBWD"),
+        "tagline": config.get("COMPANY_TAGLINE", ""),
+        "address": config.get("COMPANY_ADDRESS", ""),
+        "email": config.get("COMPANY_EMAIL", ""),
+        "website": config.get("COMPANY_WEBSITE", ""),
+    }
+
+
+def _format_duration(start_at: datetime, end_at: datetime) -> str:
+    total_minutes = int((end_at - start_at).total_seconds() // 60)
+    if total_minutes < 60:
+        return f"{total_minutes} min"
+    hours, minutes = divmod(total_minutes, 60)
+    if minutes == 0:
+        return f"{hours}h"
+    return f"{hours}h {minutes}min"
+
+
+def _build_booking_pdf_context(booking, resource, user, invoice=None) -> dict:
+    from decimal import Decimal
+
+    price_display = ""
+    if resource and resource.price:
+        currency = resource.currency or "EUR"
+        price_display = f"{Decimal(str(resource.price)):.2f} {currency}"
+
+    is_paid = False
+    invoice_number = None
+    if invoice is not None:
+        invoice_status = (
+            invoice.status.value
+            if hasattr(invoice.status, "value")
+            else str(invoice.status)
+        )
+        is_paid = invoice_status == "paid"
+        invoice_number = getattr(invoice, "invoice_number", None)
+
+    booking_status = (
+        booking.status.value
+        if hasattr(booking.status, "value")
+        else str(booking.status)
+    )
+
+    customer_name = ""
+    customer_phone = ""
+    customer_company = ""
+    details = getattr(user, "details", None) if user else None
+    if details is not None:
+        first_name = getattr(details, "first_name", "") or ""
+        last_name = getattr(details, "last_name", "") or ""
+        customer_name = (first_name + " " + last_name).strip()
+        customer_phone = getattr(details, "phone", "") or ""
+        customer_company = getattr(details, "company", "") or ""
+
+    return {
+        "company": _company_context(),
+        "resource": {
+            "name": resource.name if resource else "",
+            "description": getattr(resource, "description", "") or ""
+            if resource
+            else "",
+            "location": getattr(resource, "location", "") or "" if resource else "",
+        },
+        "customer": {
+            "name": customer_name,
+            "email": getattr(user, "email", "") or "",
+            "phone": customer_phone,
+            "company": customer_company,
+        },
+        "booking": {
+            "id": str(booking.id),
+            "short_id": str(booking.id)[:8],
+            "status": booking_status,
+            "created_at_display": booking.created_at.strftime("%Y-%m-%d")
+            if booking.created_at
+            else "",
+            "start_date_display": booking.start_at.strftime("%Y-%m-%d"),
+            "start_time_display": booking.start_at.strftime("%H:%M"),
+            "end_time_display": booking.end_at.strftime("%H:%M"),
+            "duration_display": _format_duration(booking.start_at, booking.end_at),
+            "quantity": booking.quantity,
+            "price_display": price_display,
+            "custom_fields": booking.custom_fields or {},
+            "notes": booking.notes or "",
+            "is_paid": is_paid,
+            "invoice_number": invoice_number,
+        },
+    }
+
+
+def _load_booking_for_download(booking_id):
+    """Shared guard for PDF + iCal endpoints: 404 if missing, 403 if not owner.
+
+    Returns a (booking, user, response_or_none) triple where response_or_none
+    is set when the handler should short-circuit with that response.
+    """
+    service = _booking_service()
+    booking = service.get_booking(booking_id)
+    if not booking:
+        return None, None, (jsonify({"error": "Booking not found"}), 404)
+    if str(booking.user_id) != str(g.user_id):
+        return None, None, (jsonify({"error": "Forbidden"}), 403)
+
+    from vbwd.repositories.user_repository import UserRepository
+
+    user = UserRepository(db.session).find_by_id(str(booking.user_id))
+    return booking, user, None
+
+
+@booking_bp.route("/api/v1/booking/bookings/<booking_id>/pdf", methods=["GET"])
+@require_auth
+def download_booking_pdf(booking_id):
+    """Stream a PDF rendering of the booking (owner-only)."""
+    booking, user, short_circuit = _load_booking_for_download(booking_id)
+    if short_circuit is not None:
+        return short_circuit
+
+    resource = ResourceRepository(db.session).find_by_id(booking.resource_id)
+
+    invoice = None
+    if booking.invoice_id:
+        from vbwd.repositories.invoice_repository import InvoiceRepository
+
+        invoice = InvoiceRepository(db.session).find_by_id(str(booking.invoice_id))
+
+    pdf_service = current_app.container.pdf_service()  # type: ignore[attr-defined]
+
+    # Self-heal: if the plugin's on_enable didn't run (tests bypass it), make
+    # sure the template path is registered before we ask for the template.
+    template_dir = os.path.join(os.path.dirname(__file__), "templates", "pdf")
+    pdf_service.register_plugin_template_path(template_dir)
+
+    context = _build_booking_pdf_context(booking, resource, user, invoice)
+    pdf_bytes = pdf_service.render("booking.html", context)
+
+    filename = f"booking-{str(booking.id)[:8]}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@booking_bp.route("/api/v1/booking/bookings/<booking_id>/ical", methods=["GET"])
+@require_auth
+def download_booking_ical(booking_id):
+    """Return a VCALENDAR (.ics) entry for the booking (owner-only)."""
+    booking, _, short_circuit = _load_booking_for_download(booking_id)
+    if short_circuit is not None:
+        return short_circuit
+
+    resource = ResourceRepository(db.session).find_by_id(booking.resource_id)
+    ics_text = _build_booking_ical(booking, resource)
+
+    filename = f"booking-{str(booking.id)[:8]}.ics"
+    return Response(
+        ics_text,
+        mimetype="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _ical_escape(text: str) -> str:
+    """Escape per RFC 5545 §3.3.11 TEXT rules."""
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\n", "\\n")
+    )
+
+
+def _ical_timestamp(value: datetime) -> str:
+    """Format as UTC floating-free timestamp (YYYYMMDDTHHMMSSZ).
+
+    We treat DB values as UTC (the codebase's convention). Downstream
+    calendars render in the user's local tz.
+    """
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return value.strftime("%Y%m%dT%H%M%SZ")
+
+
+def _build_booking_ical(booking, resource) -> str:
+    """Minimal VCALENDAR with METHOD:PUBLISH and one VEVENT.
+
+    SEQUENCE is derived from booking.version (if BaseModel exposes it),
+    so every reschedule bumps the sequence and mature calendar clients
+    (Google, Apple) replace the existing entry instead of duplicating.
+    """
+    company = _company_context()
+    organizer_mailto = company.get("email") or "support@example.com"
+    organizer_cn = company.get("name") or "VBWD"
+
+    now_utc = datetime.utcnow()
+    sequence = getattr(booking, "version", 0) or 0
+
+    booking_status = (
+        booking.status.value
+        if hasattr(booking.status, "value")
+        else str(booking.status)
+    )
+    ical_status_map = {
+        "pending": "TENTATIVE",
+        "confirmed": "CONFIRMED",
+        "cancelled": "CANCELLED",
+        "completed": "CONFIRMED",
+    }
+    ical_status = ical_status_map.get(booking_status, "CONFIRMED")
+
+    summary = resource.name if resource else "Booking"
+    description = getattr(resource, "description", "") if resource else ""
+    if booking.notes:
+        description = f"{description}\n\n{booking.notes}".strip()
+
+    location = getattr(resource, "location", "") if resource else ""
+
+    host = request.host or "vbwd.local"
+    uid = f"{booking.id}@{host}"
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//vbwd//booking//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{_ical_timestamp(now_utc)}",
+        f"DTSTART:{_ical_timestamp(booking.start_at)}",
+        f"DTEND:{_ical_timestamp(booking.end_at)}",
+        f"SUMMARY:{_ical_escape(summary)}",
+        f"DESCRIPTION:{_ical_escape(description)}",
+    ]
+    if location:
+        lines.append(f"LOCATION:{_ical_escape(location)}")
+    lines += [
+        f"ORGANIZER;CN={_ical_escape(organizer_cn)}:mailto:{organizer_mailto}",
+        f"STATUS:{ical_status}",
+        f"SEQUENCE:{sequence}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+@booking_bp.route("/api/v1/booking/bookings/<booking_id>", methods=["PATCH"])
+@require_auth
+def reschedule_booking_route(booking_id):
+    """
+    Reschedule an upcoming booking in-place.
+
+    Body: { start_at: ISO8601, end_at: ISO8601 }
+    Returns:
+      200 { booking }          on success
+      400 { error }            validation failure (grace period, capacity, status...)
+      403 { error }            non-owner
+      404 { error }            booking not found
+    """
+    data = request.get_json(silent=True) or {}
+    if "start_at" not in data or "end_at" not in data:
+        return jsonify({"error": "start_at and end_at are required"}), 400
+
+    try:
+        new_start_at = datetime.fromisoformat(data["start_at"])
+        new_end_at = datetime.fromisoformat(data["end_at"])
+    except ValueError:
+        return jsonify({"error": "Invalid datetime format"}), 400
+
+    # Short-circuit ownership check so we can return 403 (vs service's 400).
+    service = _booking_service()
+    existing_booking = service.get_booking(booking_id)
+    if not existing_booking:
+        return jsonify({"error": "Booking not found"}), 404
+    if str(existing_booking.user_id) != str(g.user_id):
+        return jsonify({"error": "Forbidden"}), 403
+
+    # Resolve policy values from the booking plugin's config.
+    plugin_manager = getattr(current_app, "plugin_manager", None)
+    booking_plugin = (
+        plugin_manager.get_plugin("booking") if plugin_manager is not None else None
+    )
+    if booking_plugin is None:
+        return jsonify({"error": "booking plugin not available"}), 503
+
+    cancellation_grace_period_hours = booking_plugin.get_config(
+        "cancellation_grace_period_hours", 24
+    )
+    min_lead_time_hours = booking_plugin.get_config("min_lead_time_hours", 1)
+
+    try:
+        booking = service.reschedule_booking(
+            booking_id=booking_id,
+            user_id=g.user_id,
+            new_start_at=new_start_at,
+            new_end_at=new_end_at,
+            cancellation_grace_period_hours=cancellation_grace_period_hours,
+            min_lead_time_hours=min_lead_time_hours,
+        )
+        db.session.commit()
+        return jsonify(booking.to_dict())
+    except BookingError as error:
+        db.session.rollback()
+        message = str(error)
+        # Full-capacity rejection → 409 (standard for conflict).
+        if "capacity" in message.lower() or "unavailable" in message.lower():
+            return jsonify({"error": message}), 409
+        return jsonify({"error": message}), 400
 
 
 # ── Admin routes ──────────────────────────────────────────────────────────────

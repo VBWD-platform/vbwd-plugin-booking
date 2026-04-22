@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Booking {{ booking.short_id }}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 20mm;
+    }
+    body {
+      font-family: "DejaVu Sans", Arial, sans-serif;
+      color: #1a202c;
+      font-size: 11pt;
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 2px solid #1a202c;
+      padding-bottom: 10mm;
+      margin-bottom: 10mm;
+    }
+    header .brand { font-size: 18pt; font-weight: 600; }
+    header .brand small { display: block; font-size: 9pt; color: #4a5568; font-weight: 400; margin-top: 2mm; }
+    header .doc-title { text-align: right; }
+    header .doc-title h1 { margin: 0; font-size: 20pt; letter-spacing: 1pt; }
+    header .doc-title .meta { font-size: 9pt; color: #4a5568; margin-top: 2mm; }
+
+    .status {
+      display: inline-block;
+      padding: 1mm 3mm;
+      border-radius: 3mm;
+      font-size: 9pt;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status--confirmed { background: #c6f6d5; color: #1a4731; }
+    .status--pending { background: #fefcbf; color: #713f12; }
+    .status--cancelled { background: #fed7d7; color: #742a2a; }
+    .status--completed { background: #bee3f8; color: #1e3a5f; }
+
+    .resource-name {
+      font-size: 24pt;
+      font-weight: 600;
+      margin: 0 0 3mm;
+      color: #1a202c;
+    }
+    .resource-desc { color: #4a5568; margin: 0 0 8mm; }
+
+    .fields {
+      display: table;
+      width: 100%;
+      border-collapse: collapse;
+      margin: 5mm 0;
+    }
+    .field {
+      display: table-row;
+    }
+    .field > div {
+      display: table-cell;
+      padding: 3mm 0;
+      border-bottom: 1px solid #e2e8f0;
+      vertical-align: top;
+    }
+    .field .label {
+      width: 35%;
+      font-size: 9pt;
+      text-transform: uppercase;
+      color: #4a5568;
+      letter-spacing: 1pt;
+      padding-right: 8mm;
+    }
+    .field .value {
+      font-weight: 500;
+    }
+
+    .parties { display: flex; justify-content: space-between; margin: 10mm 0; }
+    .parties .party { width: 48%; }
+    .parties h3 { font-size: 9pt; text-transform: uppercase; color: #4a5568; letter-spacing: 1pt; margin: 0 0 2mm; }
+    .parties p { margin: 0.5mm 0; }
+
+    .payment-banner {
+      margin-top: 10mm;
+      padding: 4mm 5mm;
+      border-radius: 3mm;
+      font-weight: 500;
+      text-align: center;
+    }
+    .payment-banner--paid { background: #c6f6d5; color: #1a4731; }
+    .payment-banner--pending { background: #fefcbf; color: #713f12; }
+
+    footer {
+      position: fixed;
+      bottom: 10mm;
+      left: 20mm;
+      right: 20mm;
+      text-align: center;
+      font-size: 8pt;
+      color: #718096;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 3mm;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      {{ company.name }}
+      {% if company.tagline %}<small>{{ company.tagline }}</small>{% endif %}
+    </div>
+    <div class="doc-title">
+      <h1>BOOKING</h1>
+      <div class="meta">
+        #{{ booking.short_id }}<br>
+        Created: {{ booking.created_at_display }}<br>
+        <span class="status status--{{ booking.status }}">{{ booking.status }}</span>
+      </div>
+    </div>
+  </header>
+
+  <h2 class="resource-name">{{ resource.name }}</h2>
+  {% if resource.description %}<p class="resource-desc">{{ resource.description }}</p>{% endif %}
+
+  <div class="fields">
+    <div class="field">
+      <div class="label">Date</div>
+      <div class="value">{{ booking.start_date_display }}</div>
+    </div>
+    <div class="field">
+      <div class="label">Time</div>
+      <div class="value">{{ booking.start_time_display }} — {{ booking.end_time_display }}</div>
+    </div>
+    <div class="field">
+      <div class="label">Duration</div>
+      <div class="value">{{ booking.duration_display }}</div>
+    </div>
+    {% if booking.quantity and booking.quantity != 1 %}
+    <div class="field">
+      <div class="label">Quantity</div>
+      <div class="value">{{ booking.quantity }}</div>
+    </div>
+    {% endif %}
+    {% if booking.price_display %}
+    <div class="field">
+      <div class="label">Price</div>
+      <div class="value">{{ booking.price_display }}</div>
+    </div>
+    {% endif %}
+    {% if resource.location %}
+    <div class="field">
+      <div class="label">Location</div>
+      <div class="value">{{ resource.location }}</div>
+    </div>
+    {% endif %}
+    {% if booking.custom_fields %}
+      {% for label, value in booking.custom_fields.items() %}
+      <div class="field">
+        <div class="label">{{ label }}</div>
+        <div class="value">{{ value }}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+    {% if booking.notes %}
+    <div class="field">
+      <div class="label">Notes</div>
+      <div class="value">{{ booking.notes }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <section class="parties">
+    <div class="party">
+      <h3>Booked by</h3>
+      <p><strong>{{ customer.name or customer.email }}</strong></p>
+      {% if customer.name and customer.email %}<p>{{ customer.email }}</p>{% endif %}
+      {% if customer.phone %}<p>{{ customer.phone }}</p>{% endif %}
+      {% if customer.company %}<p>{{ customer.company }}</p>{% endif %}
+    </div>
+    <div class="party">
+      <h3>Provider</h3>
+      <p><strong>{{ company.name }}</strong></p>
+      {% if company.email %}<p>{{ company.email }}</p>{% endif %}
+      {% if company.address %}<p>{{ company.address }}</p>{% endif %}
+    </div>
+  </section>
+
+  {% if booking.is_paid %}
+  <div class="payment-banner payment-banner--paid">Paid{% if booking.invoice_number %} · Invoice {{ booking.invoice_number }}{% endif %}</div>
+  {% elif booking.status != "cancelled" %}
+  <div class="payment-banner payment-banner--pending">Pending payment</div>
+  {% endif %}
+
+  <footer>
+    Present this booking on arrival.{% if company.email %} · {{ company.email }}{% endif %}
+  </footer>
+</body>
+</html>

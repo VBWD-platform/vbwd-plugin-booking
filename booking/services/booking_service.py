@@ -1,6 +1,8 @@
-"""BookingService — create, cancel, complete bookings."""
+"""BookingService — create, cancel, complete, reschedule bookings."""
 import os
 from datetime import datetime
+
+from vbwd.utils.datetime_utils import utcnow
 
 from plugins.booking.booking.repositories.booking_repository import BookingRepository
 from plugins.booking.booking.repositories.resource_repository import ResourceRepository
@@ -199,6 +201,122 @@ class BookingService:
             )
 
         return booking
+
+    def reschedule_booking(
+        self,
+        booking_id,
+        user_id,
+        new_start_at: datetime,
+        new_end_at: datetime,
+        *,
+        cancellation_grace_period_hours: int,
+        min_lead_time_hours: int,
+    ) -> Booking:
+        """Reschedule an upcoming booking in-place.
+
+        Per Sprint 28 Q2: the invoice is NOT touched. Only booking.start_at
+        and booking.end_at change; status remains as-is. An audit line is
+        appended to admin_notes, and "booking.rescheduled" is emitted.
+
+        Per Sprint 28 Q3: the same grace period as cancel applies regardless
+        of status (so a pending-unpaid booking can't be moved late either).
+
+        Raises BookingError on any validation failure.
+        """
+        booking = self.booking_repository.find_by_id(booking_id)
+        if not booking:
+            raise BookingError("Booking not found")
+
+        if str(booking.user_id) != str(user_id):
+            raise BookingError("Only the booking owner may reschedule")
+
+        if booking.status not in ("pending", "confirmed"):
+            raise BookingError(
+                f"Cannot reschedule booking with status '{booking.status}'"
+            )
+
+        now = utcnow()
+
+        # Cut-off: the *original* start must still be outside the grace window.
+        grace_seconds = cancellation_grace_period_hours * 3600
+        current_start = self._as_naive(booking.start_at)
+        if (current_start - self._as_naive(now)).total_seconds() < grace_seconds:
+            raise BookingError(
+                "Reschedule grace period has passed — booking is too close to its start time"
+            )
+
+        # New start must respect min lead time.
+        lead_seconds = min_lead_time_hours * 3600
+        if (
+            self._as_naive(new_start_at) - self._as_naive(now)
+        ).total_seconds() < lead_seconds:
+            raise BookingError(
+                "New start time is in the past or violates the minimum lead time"
+            )
+
+        if new_end_at <= new_start_at:
+            raise BookingError("New end time must be after the new start time")
+
+        # Capacity check on the new slot — exclude this booking so the
+        # resource doesn't compete with itself when the new slot overlaps.
+        resource = self.resource_repository.find_by_id(booking.resource_id)
+        if not resource:
+            raise BookingError("Resource for this booking no longer exists")
+
+        concurrent_count = self.booking_repository.count_by_resource_and_slot(
+            resource.id,
+            new_start_at,
+            new_end_at,
+            exclude_booking_id=booking.id,
+        )
+        available_capacity = resource.capacity - concurrent_count
+        if booking.quantity > available_capacity:
+            raise BookingError("Requested slot is at full capacity / unavailable")
+
+        old_start_at = booking.start_at
+        booking.start_at = new_start_at
+        booking.end_at = new_end_at
+
+        audit_line = (
+            f"Rescheduled from {old_start_at.isoformat()} to {new_start_at.isoformat()} "
+            f"at {now.isoformat()}"
+        )
+        existing_notes = booking.admin_notes or ""
+        booking.admin_notes = (
+            f"{existing_notes}\n{audit_line}".strip() if existing_notes else audit_line
+        )
+
+        self.booking_repository.save(booking)
+
+        if self.event_bus:
+            user_email, user_name = self._resolve_user(booking.user_id)
+            self.event_bus.publish(
+                "booking.rescheduled",
+                {
+                    "user_id": str(booking.user_id),
+                    "user_email": user_email,
+                    "user_name": user_name,
+                    "booking_id": str(booking.id),
+                    "resource_name": resource.name,
+                    "old_start_at": old_start_at.isoformat(),
+                    "new_start_at": new_start_at.isoformat(),
+                    "dashboard_url": f"{FRONTEND_URL}/dashboard/bookings/{booking.id}",
+                },
+            )
+
+        return booking
+
+    @staticmethod
+    def _as_naive(value: datetime) -> datetime:
+        """Drop tzinfo for arithmetic when Python is mixing aware + naive.
+
+        The codebase stores times as naive UTC; `utcnow()` returns a naive
+        UTC datetime. Incoming API datetimes may be tz-aware — normalise so
+        subtractions don't throw.
+        """
+        if value.tzinfo is None:
+            return value
+        return value.replace(tzinfo=None)
 
     def get_user_bookings(self, user_id) -> list[Booking]:
         """Get all bookings for a user."""
