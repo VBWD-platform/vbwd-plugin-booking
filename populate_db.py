@@ -864,6 +864,15 @@ def populate(force=False):
     except ImportError:
         print("  ! CMS plugin not installed — skipping CMS setup")
 
+    # Seed the checkout-confirmation page that BookingRedirect → /checkout/confirmation
+    # depends on. Idempotent — safe even when shop/subscription seed it too.
+    try:
+        from plugins.checkout.populate_db import populate_checkout_cms
+
+        populate_checkout_cms()
+    except ImportError:
+        print("  ! checkout plugin not installed — skipping checkout-confirmation page")
+
     # Email templates for booking events
     try:
         from plugins.email.src.models.email_template import EmailTemplate
