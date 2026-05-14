@@ -44,31 +44,14 @@ jobs:
       - name: Style check — Mypy
         run: mypy vbwd-backend/plugins/booking/booking/ --ignore-missing-imports --no-error-summary --python-version=3.11 || true
 
-      - name: Start services
-        working-directory: vbwd-backend
-        run: docker compose up -d --build
-
-      - name: Wait for API
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:5000/api/v1/health > /dev/null 2>&1 && break
-            sleep 2
-          done
-          curl -sf http://localhost:5000/api/v1/health || exit 1
-
       - name: Run unit tests
         working-directory: vbwd-backend
         run: |
           if [ -d "plugins/booking/tests/unit" ]; then
-            docker compose run --rm test pytest plugins/booking/tests/unit/ -v --tb=short
+            python -m pytest plugins/booking/tests/unit/ -v --tb=short
           else
             echo "No unit tests yet"
           fi
-
-      - name: Cleanup
-        if: always()
-        working-directory: vbwd-backend
-        run: docker compose down -v
 
   integration:
     name: Integration — booking
