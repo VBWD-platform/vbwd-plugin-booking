@@ -33,24 +33,6 @@ class BookingPlugin(BasePlugin):
             merged.update(config)
         super().initialize(merged)
 
-    def on_enable(self):
-        """Register PDF template path with the core PdfService once enabled."""
-        super().on_enable()
-        try:
-            import os
-
-            from flask import current_app
-
-            pdf_service = current_app.container.pdf_service()  # type: ignore[attr-defined]
-            template_dir = os.path.join(
-                os.path.dirname(__file__), "booking", "templates", "pdf"
-            )
-            pdf_service.register_plugin_template_path(template_dir)
-        except Exception:
-            # Running outside an app context (e.g. test import). The PDF
-            # route re-registers as a fallback before rendering.
-            pass
-
     def get_blueprint(self):
         from plugins.booking.booking.routes import booking_bp
 
@@ -95,9 +77,27 @@ class BookingPlugin(BasePlugin):
         ]
 
     def on_enable(self):
+        super().on_enable()
+
         from plugins.booking.booking.events import register_email_contexts
 
         register_email_contexts()
+
+        # Register PDF template path with the core PdfService once enabled.
+        # Running outside an app context (e.g. test import) is fine — the PDF
+        # route re-registers as a fallback before rendering.
+        try:
+            import os
+
+            from flask import current_app
+
+            pdf_service = current_app.container.pdf_service()  # type: ignore[attr-defined]
+            template_dir = os.path.join(
+                os.path.dirname(__file__), "booking", "templates", "pdf"
+            )
+            pdf_service.register_plugin_template_path(template_dir)
+        except Exception:
+            pass
 
     def register_event_handlers(self, event_bus):
         import logging

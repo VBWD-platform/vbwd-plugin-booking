@@ -1,5 +1,5 @@
 """Tests for GET /api/v1/booking/config — public policy values endpoint."""
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from flask import Flask
 
