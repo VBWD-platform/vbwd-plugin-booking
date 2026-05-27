@@ -83,6 +83,42 @@ class BookingPlugin(BasePlugin):
 
         register_email_contexts()
 
+        # S09 — register the plugin's repositories with the DI container so
+        # the payment handler / completion service / consumers can resolve
+        # them via `current_app.container.booking_<name>_repository()`
+        # instead of constructing inline with `db.session`.
+        from flask import current_app
+
+        from vbwd.plugins.di_helpers import register_repositories
+        from plugins.booking.booking.repositories.booking_repository import (
+            BookingRepository,
+        )
+        from plugins.booking.booking.repositories.custom_schema_repository import (
+            CustomSchemaRepository,
+        )
+        from plugins.booking.booking.repositories.export_rule_repository import (
+            ExportRuleRepository,
+        )
+        from plugins.booking.booking.repositories.resource_category_repository import (  # noqa: E501
+            ResourceCategoryRepository,
+        )
+        from plugins.booking.booking.repositories.resource_repository import (
+            ResourceRepository,
+        )
+
+        container = getattr(current_app, "container", None)
+        if container is not None:
+            register_repositories(
+                container,
+                {
+                    "booking_booking_repository": BookingRepository,
+                    "booking_resource_repository": ResourceRepository,
+                    "booking_resource_category_repository": ResourceCategoryRepository,
+                    "booking_custom_schema_repository": CustomSchemaRepository,
+                    "booking_export_rule_repository": ExportRuleRepository,
+                },
+            )
+
         # Register PDF template path with the core PdfService once enabled.
         # Running outside an app context (e.g. test import) is fine — the PDF
         # route re-registers as a fallback before rendering.
@@ -98,6 +134,28 @@ class BookingPlugin(BasePlugin):
             pdf_service.register_plugin_template_path(template_dir)
         except Exception:
             pass
+
+        # Booking auto-completion scheduler (S01 — moved out of core).
+        # Skip under TESTING: every test builds its own app and runs on_enable,
+        # which would otherwise spin up a background thread per test app and
+        # leak threads + DB connections across a full-suite run. Subscription
+        # plugin's scheduler guards itself the same way.
+        import logging
+
+        scheduler_logger = logging.getLogger(__name__)
+        try:
+            from flask import current_app
+
+            if not current_app.config.get("TESTING"):
+                from plugins.booking.booking.scheduler import (
+                    start_booking_scheduler,
+                )
+
+                start_booking_scheduler(current_app._get_current_object())
+        except Exception as scheduler_error:
+            scheduler_logger.warning(
+                "[booking] Failed to start scheduler: %s", scheduler_error
+            )
 
     def register_event_handlers(self, event_bus):
         import logging
