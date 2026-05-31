@@ -7,7 +7,7 @@ from vbwd.models.base import BaseModel
 class Booking(BaseModel):
     """A confirmed reservation of a BookableResource by a user."""
 
-    __tablename__ = "booking"
+    __tablename__ = "booking_reservation"
 
     resource_id = db.Column(
         UUID(as_uuid=True),
