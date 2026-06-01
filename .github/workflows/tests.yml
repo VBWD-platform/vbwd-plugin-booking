@@ -160,19 +160,48 @@ jobs:
           done
           curl -sf http://localhost:5000/api/v1/health || exit 1
 
-      - name: Run migrations + seed
+      - name: Create schema + seed test data
         working-directory: vbwd-backend
         run: |
-          docker compose exec -T api alembic upgrade head || true
-          docker compose exec -T api flask seed-test-data || docker compose exec -T api python -c "
-          import os; os.environ['TEST_DATA_SEED']='true'
+          # The Alembic graph is intentionally multi-head (core + each plugin
+          # owns its own leaf revision), so `upgrade head` (singular) aborts
+          # with "Multiple head revisions are present" and — masked by `|| true`
+          # — left the DB empty, so login had no admin user and every e2e timed
+          # out on the post-login redirect. For an e2e environment we only need
+          # the schema to EXIST, so build it model-first with create_all (which
+          # also yields the correct post-S43 table names regardless of which
+          # plugin subset CI cloned). `upgrade heads` (plural) is a best-effort
+          # extra to exercise data-seeding migrations; create_all is the
+          # guarantee.
+          docker compose exec -T api alembic upgrade heads || true
+          docker compose exec -T api python -c "
           from vbwd.app import create_app
+          from vbwd.extensions import db
           app = create_app()
           with app.app_context():
-              from vbwd.testing.test_data_seeder import TestDataSeeder
-              from vbwd.extensions import db
+              db.create_all()
+          "
+          # Seed the admin/test users. NO `|| true`: if this fails the e2e is
+          # meaningless, so fail loudly here with a clear error instead.
+          docker compose exec -T api python -c "
+          import os; os.environ['TEST_DATA_SEED']='true'
+          from vbwd.app import create_app
+          from vbwd.extensions import db
+          from vbwd.testing.test_data_seeder import TestDataSeeder
+          app = create_app()
+          with app.app_context():
               TestDataSeeder(db.session).seed()
-          " || true
+          "
+          # Fail fast if the admin account the specs log in with is absent.
+          docker compose exec -T api python -c "
+          from vbwd.app import create_app
+          from vbwd.extensions import db
+          from vbwd.models.user import User
+          app = create_app()
+          with app.app_context():
+              assert db.session.query(User).filter_by(email='admin@example.com').first(), 'admin@example.com not seeded'
+              print('admin@example.com present — login will succeed')
+          "
 
       # ── Frontend ───────────────────────────────────────────────────────
       - name: Clone vbwd-fe-admin
