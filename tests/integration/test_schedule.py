@@ -8,6 +8,7 @@ Tests:
 """
 import pytest
 import uuid
+from datetime import date, timedelta
 
 
 @pytest.fixture(autouse=True)
@@ -170,9 +171,16 @@ class TestBlockedExcludedFromAvailability:
     ):
         slug = test_resource["slug"]
 
+        # The resource is open Mon–Fri; use the next upcoming weekday so the
+        # public availability endpoint (which omits past dates) returns slots.
+        target = date.today() + timedelta(days=1)
+        while target.weekday() >= 5:  # skip Sat (5) / Sun (6)
+            target += timedelta(days=1)
+        target_date = target.isoformat()
+
         # Get availability before blocking
         before_resp = client.get(
-            f"/api/v1/booking/resources/{slug}/availability?date=2026-06-01"
+            f"/api/v1/booking/resources/{slug}/availability?date={target_date}"
         )
         before_slots = before_resp.get_json()["slots"]
         before_count = len(before_slots)
@@ -183,7 +191,7 @@ class TestBlockedExcludedFromAvailability:
         client.post(
             f"/api/v1/admin/booking/resources/{test_resource['id']}/block-slot",
             json={
-                "date": "2026-06-01",
+                "date": target_date,
                 "start": first_slot["start"],
                 "end": first_slot["end"],
             },
@@ -192,7 +200,7 @@ class TestBlockedExcludedFromAvailability:
 
         # Get availability after blocking
         after_resp = client.get(
-            f"/api/v1/booking/resources/{slug}/availability?date=2026-06-01"
+            f"/api/v1/booking/resources/{slug}/availability?date={target_date}"
         )
         after_slots = after_resp.get_json()["slots"]
         assert len(after_slots) == before_count - 1
