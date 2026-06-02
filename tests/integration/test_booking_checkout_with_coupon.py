@@ -17,6 +17,10 @@ from vbwd.models.user import User
 
 @pytest.fixture
 def discount_ready(db):
+    # The discount plugin is an optional, opt-in collaborator of booking
+    # checkout. This cross-plugin coupon test only runs when discount is
+    # installed (full local suite); in isolated plugin CI it is absent, so skip.
+    pytest.importorskip("plugins.discount.discount.models")
     import plugins.discount.discount.models  # noqa: F401
 
     db.create_all()
