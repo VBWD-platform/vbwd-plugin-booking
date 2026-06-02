@@ -74,7 +74,11 @@ class BookingInvoiceService:
         invoice = UserInvoice()
         invoice.user_id = user_id
         invoice.invoice_number = f"{self.invoice_prefix}-{uuid.uuid4().hex[:8].upper()}"
+        # Set all three so downstream consumers (e.g. token-balance payment,
+        # which charges on total_amount) have a non-null total.
         invoice.amount = total_amount
+        invoice.subtotal = total_amount
+        invoice.total_amount = total_amount
         invoice.currency = resource.currency or "EUR"
         invoice.status = InvoiceStatus.PENDING
         invoice.invoiced_at = datetime.utcnow()

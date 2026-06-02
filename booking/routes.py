@@ -190,6 +190,28 @@ def booking_checkout():
             400,
         )
 
+    # Pre-validate a coupon (BOOKING scope) via the generic core seam before
+    # creating the invoice — the discount plugin owns the math; booking names no
+    # discount domain. No code / discount plugin disabled → no-op.
+    from decimal import Decimal
+    from vbwd.services.checkout_price_adjustment_registry import (
+        resolve_price_adjustment,
+    )
+
+    subtotal = Decimal(str(resource.price)) * quantity
+    price_result = resolve_price_adjustment(
+        code=data.get("coupon_code"),
+        subtotal=subtotal,
+        user_id=str(g.user_id) if g.user_id else None,
+        scope="BOOKING",
+        currency=resource.currency or "EUR",
+    )
+    if not price_result.valid:
+        return (
+            jsonify({"error": price_result.error or "Coupon is not valid"}),
+            400,
+        )
+
     invoice = BookingInvoiceService(db.session).create_checkout_invoice(
         user_id=g.user_id,
         resource=resource,
@@ -199,7 +221,50 @@ def booking_checkout():
         custom_fields=data.get("custom_fields"),
         notes=data.get("notes"),
     )
+
+    if price_result.discount_amount > Decimal("0"):
+        import uuid as _uuid
+        from vbwd.models.enums import LineItemType
+        from vbwd.models.invoice_line_item import InvoiceLineItem
+
+        discount_line = InvoiceLineItem()
+        discount_line.invoice_id = invoice.id
+        discount_line.item_type = LineItemType.CUSTOM
+        discount_line.item_id = _uuid.uuid4()
+        discount_line.description = price_result.label or "Discount"
+        discount_line.quantity = 1
+        discount_line.unit_price = -price_result.discount_amount
+        discount_line.total_price = -price_result.discount_amount
+        discount_line.extra_data = {
+            "discount": True,
+            "coupon_code": data.get("coupon_code"),
+        }
+        db.session.add(discount_line)
+        net = subtotal - price_result.discount_amount
+        invoice.amount = net
+        invoice.subtotal = net
+        invoice.total_amount = net
+
     db.session.commit()
+
+    if price_result.on_committed:
+        price_result.on_committed(str(invoice.id), str(g.user_id))
+
+    # Pay Zero: a free booking (€0 resource, or a 100%-off coupon) is captured
+    # immediately via the shared payment seam — the invoice is marked PAID and
+    # the booking created with no payment step. Mirrors the subscription
+    # checkout's zero-price path; same chain token-balance payments use.
+    if (invoice.total_amount or Decimal("0")) <= Decimal("0"):
+        from vbwd.plugins.payment_route_helpers import emit_payment_captured
+
+        emit_payment_captured(
+            invoice_id=invoice.id,
+            payment_reference=f"zero-price:{invoice.id}",
+            amount=invoice.total_amount,
+            currency=invoice.currency,
+            provider="zero-price",
+            transaction_id=str(invoice.id),
+        )
 
     return (
         jsonify(
