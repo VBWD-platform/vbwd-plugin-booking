@@ -76,12 +76,36 @@ class BookingPlugin(BasePlugin):
             },
         ]
 
+    def _register_data_exchangers(self) -> None:
+        """Register the booking entity exchangers into the data-exchange seam.
+
+        Core declares none of these (it stays agnostic); the plugin adds them on
+        enable through the shared ``db.session`` so bookings appear on the
+        generic Settings → Import/Export page. Clear-safe: re-registering
+        replaces by key (per-test app re-enable).
+        """
+        import logging
+
+        try:
+            from vbwd.extensions import db
+            from plugins.booking.booking.services.data_exchange.booking_exchangers import (  # noqa: E501
+                register_booking_exchangers,
+            )
+
+            register_booking_exchangers(db.session)
+        except Exception as exchanger_error:
+            logging.getLogger(__name__).warning(
+                "[booking] Failed to register data exchangers: %s", exchanger_error
+            )
+
     def on_enable(self):
         super().on_enable()
 
         from plugins.booking.booking.events import register_email_contexts
 
         register_email_contexts()
+
+        self._register_data_exchangers()
 
         # S09 — register the plugin's repositories with the DI container so
         # the payment handler / completion service / consumers can resolve
