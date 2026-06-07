@@ -42,7 +42,6 @@ from vbwd.services.data_exchange.base_model_exchanger import BaseModelExchanger
 from vbwd.services.data_exchange.port import (
     CLUSTER_SALES,
     EntityExchanger,
-    ExportSelector,
 )
 from vbwd.services.data_exchange.registry import data_exchange_registry
 
@@ -80,10 +79,9 @@ class _SessionModelRepository:
 class _PermissionMappedModelExchanger(BaseModelExchanger):
     """A ``BaseModelExchanger`` whose perms map onto existing booking perms.
 
-    Also normalises selector matching for a UUID natural key: the generic base
-    compares ``getattr(row, natural_key)`` against the selector ids, but the
-    booking ``id`` column yields ``uuid.UUID`` instances while selectors carry
-    strings, so it stringifies both sides before comparing.
+    Selector matching (including the UUID ``id`` natural key) is handled by the
+    base ``_select_rows``, which stringifies both sides and matches primary id
+    OR natural key — so no selection override is needed here.
     """
 
     def __init__(
@@ -96,15 +94,6 @@ class _PermissionMappedModelExchanger(BaseModelExchanger):
         super().__init__(**kwargs)
         self._view_permission = view_permission
         self._manage_permission = manage_permission
-
-    def _select_rows(self, selector: ExportSelector) -> List[Any]:
-        all_rows = self._repository.find_all()
-        if selector.ids:
-            wanted = {str(value) for value in selector.ids}
-            return [
-                row for row in all_rows if str(getattr(row, self.natural_key)) in wanted
-            ]
-        return all_rows
 
     @property
     def export_permission(self) -> str:
