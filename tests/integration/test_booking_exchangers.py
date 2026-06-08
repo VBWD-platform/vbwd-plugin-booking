@@ -110,3 +110,4 @@ class TestRegistration:
         assert exchanger is not None
         assert exchanger.cluster == CLUSTER_SALES
         assert exchanger.supports_import is True
+        assert "csv" in exchanger.supported_formats

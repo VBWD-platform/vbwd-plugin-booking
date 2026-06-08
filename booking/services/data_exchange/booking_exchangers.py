@@ -131,6 +131,7 @@ def build_booking_exchangers(session: Any) -> List[EntityExchanger]:
                 "admin_notes",
             ],
             pii_fields=frozenset({"notes", "admin_notes"}),
+            supported_formats=frozenset({"json", "csv"}),
             view_permission=PERM_BOOKINGS_VIEW,
             manage_permission=PERM_BOOKINGS_MANAGE,
         ),
