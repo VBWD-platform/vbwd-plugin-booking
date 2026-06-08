@@ -1360,16 +1360,13 @@ def admin_upload_resource_image(resource_id):
     from plugins.cms.src.repositories.cms_image_repository import (
         CmsImageRepository,
     )
-    from plugins.cms.src.services.file_storage import LocalFileStorage
+    from vbwd.interfaces.file_storage import ManagerBackedFileStorage
     from plugins.booking.booking.models.resource_image import (
         BookableResourceImage,
     )
 
     image_repo = CmsImageRepository(db.session)
-    storage = LocalFileStorage(
-        base_path="/app/uploads",
-        base_url="/uploads",
-    )
+    storage = ManagerBackedFileStorage(current_app.container.filesystem_manager())
     cms_service = CmsImageService(image_repo, storage)
 
     cms_image_data = cms_service.upload_image(file_data, filename, mime_type)
