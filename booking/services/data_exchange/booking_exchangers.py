@@ -36,18 +36,22 @@ Engineering requirements (binding, restated): TDD-first; DevOps-first; SOLID
 no overengineering. Quality guard: ``bin/pre-commit-check.sh --plugin booking
 --full``.
 """
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from vbwd.services.data_exchange.base_model_exchanger import BaseModelExchanger
 from vbwd.services.data_exchange.port import (
     CLUSTER_SALES,
     EntityExchanger,
+    ImportResult,
 )
 from vbwd.services.data_exchange.registry import data_exchange_registry
 
 # Existing booking permissions (single source — BookingPlugin.admin_permissions).
 PERM_BOOKINGS_VIEW = "booking.bookings.view"
 PERM_BOOKINGS_MANAGE = "booking.bookings.manage"
+PERM_RESOURCES_VIEW = "booking.resources.view"
+PERM_RESOURCES_MANAGE = "booking.resources.manage"
 
 
 class _SessionModelRepository:
@@ -104,9 +108,108 @@ class _PermissionMappedModelExchanger(BaseModelExchanger):
         return self._manage_permission
 
 
+class _BookingCategoryExchanger(_PermissionMappedModelExchanger):
+    """``booking_categories`` carrying the self-referential parent by slug.
+
+    ``BaseModelExchanger.fk_natural_key_map`` is export-only, so the
+    self-referential ``parent_id`` cannot round-trip through it: a slug must be
+    resolved back to the (possibly different) local id on import. This thin
+    subclass exports ``parent_slug`` instead of ``parent_id`` and resolves it on
+    row-apply, skipping with an error row if the parent slug is unknown — never
+    crashing the whole import (Liskov: the base import contract is preserved).
+    """
+
+    def _serialise_row(self, row: Any, *, include_pii: bool) -> dict:
+        result = super()._serialise_row(row, include_pii=include_pii)
+        parent = getattr(row, "parent", None)
+        result["parent_slug"] = parent.slug if parent is not None else None
+        return result
+
+    def _import_row(
+        self, row: dict, index: int, result: ImportResult, *, dry_run: bool
+    ) -> None:
+        parent_slug = row.get("parent_slug")
+        scalar_row = {key: value for key, value in row.items() if key != "parent_slug"}
+        parent_id = None
+        if parent_slug:
+            parent = self._repository.find_by_natural_key(parent_slug)
+            if parent is None:
+                result.errors.append(
+                    {
+                        "row": index,
+                        "reason": f"unknown parent_slug '{parent_slug}'",
+                    }
+                )
+                return
+            parent_id = parent.id
+        scalar_row["parent_id"] = parent_id
+        super()._import_row(scalar_row, index, result, dry_run=dry_run)
+
+
+class _BookingResourceExchanger(_PermissionMappedModelExchanger):
+    """``booking_resources`` carrying the resource↔category M2M by slug.
+
+    Exports ``category_slugs`` (the resource's category slugs) alongside the
+    scalar/JSON fields and resolves them back to local category ids on import.
+    A ``price`` Decimal is serialised as a string (mirroring the model's
+    ``to_dict``). An unknown category slug records an error row and skips that
+    resource without crashing the import (Liskov).
+    """
+
+    def _serialise_row(self, row: Any, *, include_pii: bool) -> dict:
+        result = super()._serialise_row(row, include_pii=include_pii)
+        if isinstance(result.get("price"), Decimal):
+            result["price"] = str(result["price"])
+        result["category_slugs"] = [category.slug for category in row.categories]
+        return result
+
+    def _import_row(
+        self, row: dict, index: int, result: ImportResult, *, dry_run: bool
+    ) -> None:
+        category_slugs = row.get("category_slugs") or []
+        categories = []
+        for category_slug in category_slugs:
+            category = self._category_repository.find_by_natural_key(category_slug)
+            if category is None:
+                result.errors.append(
+                    {
+                        "row": index,
+                        "reason": f"unknown category_slug '{category_slug}'",
+                    }
+                )
+                return
+            categories.append(category)
+
+        scalar_row = {
+            key: value for key, value in row.items() if key != "category_slugs"
+        }
+        if "price" in scalar_row and scalar_row["price"] is not None:
+            scalar_row["price"] = Decimal(str(scalar_row["price"]))
+
+        before = result.created + result.updated
+        super()._import_row(scalar_row, index, result, dry_run=dry_run)
+        if dry_run or (result.created + result.updated) == before:
+            return
+        instance = self._repository.find_by_natural_key(scalar_row[self.natural_key])
+        if instance is not None:
+            instance.categories = categories
+
+    def __init__(self, *, category_repository: Any, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._category_repository = category_repository
+
+
 def build_booking_exchangers(session: Any) -> List[EntityExchanger]:
     """Construct the booking exchangers bound to ``session``."""
     from plugins.booking.booking.models.booking import Booking
+    from plugins.booking.booking.models.resource import BookableResource
+    from plugins.booking.booking.models.resource_category import (
+        BookableResourceCategory,
+    )
+
+    category_repository = _SessionModelRepository(
+        session, BookableResourceCategory, "slug"
+    )
 
     return [
         _PermissionMappedModelExchanger(
@@ -134,6 +237,54 @@ def build_booking_exchangers(session: Any) -> List[EntityExchanger]:
             supported_formats=frozenset({"json", "csv"}),
             view_permission=PERM_BOOKINGS_VIEW,
             manage_permission=PERM_BOOKINGS_MANAGE,
+        ),
+        _BookingCategoryExchanger(
+            entity_key="booking_categories",
+            label="Booking Categories",
+            cluster=CLUSTER_SALES,
+            natural_key="slug",
+            model_class=BookableResourceCategory,
+            repository=category_repository,
+            session=session,
+            public_fields=[
+                "name",
+                "slug",
+                "description",
+                "image_url",
+                "config",
+                "sort_order",
+                "is_active",
+            ],
+            view_permission=PERM_RESOURCES_VIEW,
+            manage_permission=PERM_RESOURCES_MANAGE,
+        ),
+        _BookingResourceExchanger(
+            entity_key="booking_resources",
+            label="Booking Resources",
+            cluster=CLUSTER_SALES,
+            natural_key="slug",
+            model_class=BookableResource,
+            repository=_SessionModelRepository(session, BookableResource, "slug"),
+            category_repository=category_repository,
+            session=session,
+            public_fields=[
+                "name",
+                "slug",
+                "description",
+                "capacity",
+                "slot_duration_minutes",
+                "price",
+                "currency",
+                "price_unit",
+                "availability",
+                "custom_fields_schema",
+                "image_url",
+                "config",
+                "is_active",
+                "sort_order",
+            ],
+            view_permission=PERM_RESOURCES_VIEW,
+            manage_permission=PERM_RESOURCES_MANAGE,
         ),
     ]
 

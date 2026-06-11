@@ -1104,15 +1104,6 @@ def _export_service():
     )
 
 
-def _import_service():
-    from plugins.booking.booking.services.import_service import ImportService
-
-    return ImportService(
-        category_repository=ResourceCategoryRepository(db.session),
-        resource_repository=ResourceRepository(db.session),
-    )
-
-
 def _export_rule_repo():
     from plugins.booking.booking.repositories.export_rule_repository import (
         ExportRuleRepository,
@@ -1160,28 +1151,11 @@ def admin_export(entity):
     )
 
 
-@booking_bp.route("/api/v1/admin/booking/import/<entity>", methods=["POST"])
-@require_auth
-@require_admin
-@require_permission("booking.configure")
-def admin_import(entity):
-    if "file" not in request.files:
-        return jsonify({"error": "file upload required"}), 400
-
-    uploaded_file = request.files["file"]
-    file_content = uploaded_file.read().decode("utf-8")
-    import_format = "json" if uploaded_file.filename.endswith(".json") else "csv"
-
-    service = _import_service()
-    if entity == "categories":
-        result = service.import_categories(file_content, import_format)
-    elif entity == "resources":
-        result = service.import_resources(file_content, import_format)
-    else:
-        return jsonify({"error": f"Import not supported for: {entity}"}), 400
-
-    db.session.commit()
-    return jsonify(result)
+# Catalogue import (categories + resources) is handled by the unified
+# data-exchange seam (booking_categories / booking_resources exchangers,
+# /api/v1/admin/data-exchange/import/<entity>), which carries the resource↔
+# category link by slug and preserves `availability`. The bespoke lossy
+# /api/v1/admin/booking/import/<entity> route was removed in S61.
 
 
 # ── Export Rules CRUD ─────────────────────────────────────────────────────────
