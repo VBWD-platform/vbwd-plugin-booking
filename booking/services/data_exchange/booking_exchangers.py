@@ -274,7 +274,6 @@ def build_booking_exchangers(session: Any) -> List[EntityExchanger]:
                 "capacity",
                 "slot_duration_minutes",
                 "price",
-                "currency",
                 "price_unit",
                 "availability",
                 "custom_fields_schema",

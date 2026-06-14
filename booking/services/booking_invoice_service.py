@@ -1,26 +1,91 @@
 """BookingInvoiceService — create invoices with CUSTOM line items for bookings."""
 import uuid
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 from vbwd.models.enums import InvoiceStatus, LineItemType
 from vbwd.models.invoice import UserInvoice
 from vbwd.models.invoice_line_item import InvoiceLineItem
 
+_CENTS = Decimal("0.01")
+
 
 class BookingInvoiceService:
-    def __init__(self, session, invoice_prefix="BK"):
+    def __init__(self, session, invoice_prefix="BK", price_factory=None):
+        """Initialize BookingInvoiceService.
+
+        Args:
+            session: SQLAlchemy session.
+            invoice_prefix: Invoice-number prefix.
+            price_factory: The core ``PriceFactory`` (D1). When provided, the
+                charged amount is the computed ``Price.brutto`` and the line item
+                records the netto + per-tax breakdown. When absent (legacy /
+                mock-based unit tests), the bare ``resource.price`` is charged
+                with no tax derivation.
+        """
         self.session = session
         self.invoice_prefix = invoice_prefix
+        self._price_factory = price_factory
+
+    def _charge_for(self, resource, quantity):
+        """Resolve (unit_price, line_total, price_breakdown, tax_fields).
+
+        S85.2 (D8): the charged unit price is ``Price.brutto`` when the factory
+        is wired. The invoice is an immutable financial record (Numeric(10,2)
+        columns), so the brutto float is quantized to cents here — the one
+        legitimate rounding boundary. S85.4: ``tax_fields`` carries the recorded
+        ``net_amount`` / ``tax_amount`` / ``tax_breakdown`` (per-rate, quantity-
+        scaled). When no factory is wired (legacy), the bare price is charged and
+        there is no tax derivation (the line defaults to net == gross).
+        """
+        if self._price_factory is not None:
+            from vbwd.pricing.line_tax_fields import line_tax_fields
+
+            computed_price = self._price_factory.get_price_from_object(resource)
+            unit_price = Decimal(str(computed_price.brutto)).quantize(
+                _CENTS, rounding=ROUND_HALF_UP
+            )
+            breakdown = computed_price.to_dict()
+            tax_fields = line_tax_fields(computed_price, quantity=quantity)
+        else:
+            unit_price = resource.price
+            breakdown = None
+            tax_fields = None
+        return unit_price, unit_price * quantity, breakdown, tax_fields
+
+    @staticmethod
+    def _apply_tax_fields(invoice, line_item, total_amount, tax_fields) -> None:
+        """Set the per-line tax columns and roll the invoice net/tax/gross up.
+
+        Falls back to net == gross with zero tax when no breakdown is available
+        (legacy / taxless line), so subtotal + tax always equals the gross total.
+        """
+        if tax_fields is not None:
+            line_item.net_amount = tax_fields["net_amount"]
+            line_item.tax_amount = tax_fields["tax_amount"]
+            line_item.tax_breakdown = tax_fields["tax_breakdown"]
+            invoice.subtotal = tax_fields["net_amount"]
+            invoice.tax_amount = tax_fields["tax_amount"]
+        else:
+            line_item.net_amount = total_amount
+            line_item.tax_amount = Decimal("0.00")
+            line_item.tax_breakdown = []
+            invoice.subtotal = total_amount
+            invoice.tax_amount = Decimal("0.00")
+        invoice.total_amount = total_amount
 
     def create_booking_invoice(self, user_id, resource, booking) -> UserInvoice:
         """Create an invoice with a CUSTOM line item for a booking."""
-        total_amount = resource.price * booking.quantity
+        unit_price, total_amount, breakdown, tax_fields = self._charge_for(
+            resource, booking.quantity
+        )
 
         invoice = UserInvoice()
         invoice.user_id = user_id
         invoice.invoice_number = f"{self.invoice_prefix}-{uuid.uuid4().hex[:8].upper()}"
         invoice.amount = total_amount
-        invoice.currency = resource.currency or "EUR"
+        # S85.1 (D5): the resource no longer carries a currency; the invoice
+        # keeps the model default (the global operating currency, S84).
         invoice.status = InvoiceStatus.PENDING
         invoice.invoiced_at = datetime.utcnow()
         self.session.add(invoice)
@@ -34,7 +99,7 @@ class BookingInvoiceService:
             f"{resource.name} — {booking.start_at.strftime('%Y-%m-%d %H:%M')}"
         )
         line_item.quantity = booking.quantity
-        line_item.unit_price = resource.price
+        line_item.unit_price = unit_price
         line_item.total_price = total_amount
         line_item.extra_data = {
             "plugin": "booking",
@@ -49,6 +114,12 @@ class BookingInvoiceService:
             "end_at": booking.end_at.isoformat(),
             "custom_fields": booking.custom_fields or {},
         }
+        if breakdown is not None:
+            # S85.2: persist the per-line netto + per-tax breakdown from the
+            # Price VO (recorded tax split for the charged brutto).
+            line_item.extra_data["price_breakdown"] = breakdown
+        # S85.4: set first-class per-rate tax columns + roll the invoice up.
+        self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
         self.session.flush()
 
@@ -69,17 +140,21 @@ class BookingInvoiceService:
         All booking metadata is stored in line_item.extra_data so the
         payment handler can create the Booking after payment succeeds.
         """
-        total_amount = resource.price * quantity
+        unit_price, total_amount, breakdown, tax_fields = self._charge_for(
+            resource, quantity
+        )
 
         invoice = UserInvoice()
         invoice.user_id = user_id
         invoice.invoice_number = f"{self.invoice_prefix}-{uuid.uuid4().hex[:8].upper()}"
         # Set all three so downstream consumers (e.g. token-balance payment,
-        # which charges on total_amount) have a non-null total.
+        # which charges on total_amount) have a non-null total. The net / tax
+        # split is filled in below via _apply_tax_fields (S85.4).
         invoice.amount = total_amount
         invoice.subtotal = total_amount
         invoice.total_amount = total_amount
-        invoice.currency = resource.currency or "EUR"
+        # S85.1 (D5): the resource no longer carries a currency; the invoice
+        # keeps the model default (the global operating currency, S84).
         invoice.status = InvoiceStatus.PENDING
         invoice.invoiced_at = datetime.utcnow()
         self.session.add(invoice)
@@ -93,7 +168,7 @@ class BookingInvoiceService:
             f"{resource.name} — {start_at.strftime('%Y-%m-%d %H:%M')}"
         )
         line_item.quantity = quantity
-        line_item.unit_price = resource.price
+        line_item.unit_price = unit_price
         line_item.total_price = total_amount
         line_item.extra_data = {
             "plugin": "booking",
@@ -111,6 +186,12 @@ class BookingInvoiceService:
             "custom_fields": custom_fields or {},
             "notes": notes,
         }
+        if breakdown is not None:
+            # S85.2: persist the per-line netto + per-tax breakdown from the
+            # Price VO (recorded tax split for the charged brutto).
+            line_item.extra_data["price_breakdown"] = breakdown
+        # S85.4: set first-class per-rate tax columns + roll the invoice up.
+        self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
         self.session.flush()
 

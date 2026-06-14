@@ -15,8 +15,8 @@
           "type": "vue"
         },
         {
-          "label": "Resource Detail",
-          "name": "booking-resource-detail",
+          "label": "Booking Form",
+          "name": "booking-form",
           "type": "vue"
         },
         {
@@ -28,14 +28,14 @@
       "description": null,
       "is_active": true,
       "is_default": false,
-      "name": "Booking Resource Detail",
-      "slug": "booking-resource-detail",
-      "sort_order": 21,
+      "name": "Booking Form",
+      "slug": "booking-form",
+      "sort_order": 22,
       "widget_assignments": [
         {
-          "area_name": "booking-resource-detail",
+          "area_name": "booking-form",
           "sort_order": 2,
-          "widget_slug": "booking-resource-detail"
+          "widget_slug": "booking-form"
         },
         {
           "area_name": "breadcrumbs",

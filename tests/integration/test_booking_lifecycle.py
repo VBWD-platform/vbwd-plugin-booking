@@ -87,7 +87,6 @@ def test_resource(client, db, admin_headers):
             "slug": slug,
             "capacity": 2,
             "price": "50.00",
-            "currency": "EUR",
             "slot_duration_minutes": 30,
             "availability": {
                 "schedule": {

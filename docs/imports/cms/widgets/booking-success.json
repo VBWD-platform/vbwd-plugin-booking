@@ -1,0 +1,19 @@
+{
+  "vbwd_export": "cms_widgets",
+  "version": 1,
+  "cms_widgets": [
+    {
+      "config": null,
+      "content_json": {
+        "component": "BookingSuccess",
+        "items_per_page": 1
+      },
+      "is_active": true,
+      "name": "Booking Success",
+      "slug": "booking-success",
+      "sort_order": 0,
+      "source_css": null,
+      "widget_type": "vue-component"
+    }
+  ]
+}

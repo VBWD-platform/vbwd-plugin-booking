@@ -73,7 +73,6 @@ def _seed_resource(db, *, slug=None, categories=(), price="49.50"):
         capacity=2,
         slot_duration_minutes=30,
         price=Decimal(price),
-        currency="EUR",
         price_unit="per_slot",
         availability=dict(_AVAILABILITY),
         sort_order=7,
@@ -175,7 +174,7 @@ class TestResourceExchanger:
         row = next(item for item in rows if item["slug"] == "room-a")
         assert row["category_slugs"] == ["rooms"]
         assert row["availability"] == _AVAILABILITY
-        assert row["price"] == "49.50"
+        assert row["price"] == 49.5
         assert row["price_unit"] == "per_slot"
         assert "category_id" not in row
 
@@ -190,7 +189,7 @@ class TestResourceExchanger:
         rebuilt = db.session.query(BookableResource).filter_by(slug="room-a").first()
         assert rebuilt is not None
         assert rebuilt.availability == _AVAILABILITY
-        assert str(rebuilt.price) == "49.50"
+        assert rebuilt.price == 49.5
         assert rebuilt.price_unit == "per_slot"
         assert rebuilt.capacity == 2
         assert [cat.slug for cat in rebuilt.categories] == ["rooms"]
@@ -234,7 +233,7 @@ class TestResourceExchanger:
         assert db.session.query(BookableResource).filter_by(slug="desk").count() == 1
         rebuilt = db.session.query(BookableResource).filter_by(slug="desk").first()
         assert rebuilt.name == "Renamed Desk"
-        assert str(rebuilt.price) == "12.00"
+        assert rebuilt.price == 12.0
 
     def test_unknown_category_slug_records_error_without_crash(self, db):
         good_category = _seed_category(db, slug="ok-cat", name="OK")
@@ -247,7 +246,6 @@ class TestResourceExchanger:
                 "capacity": 1,
                 "slot_duration_minutes": None,
                 "price": "1.00",
-                "currency": "EUR",
                 "price_unit": "per_slot",
                 "availability": {},
                 "custom_fields_schema": None,
@@ -264,7 +262,6 @@ class TestResourceExchanger:
                 "capacity": 1,
                 "slot_duration_minutes": None,
                 "price": "2.00",
-                "currency": "EUR",
                 "price_unit": "per_slot",
                 "availability": {},
                 "custom_fields_schema": None,
@@ -300,7 +297,6 @@ class TestResourceExchanger:
                 "capacity": 1,
                 "slot_duration_minutes": None,
                 "price": "5.00",
-                "currency": "EUR",
                 "price_unit": "per_slot",
                 "availability": {},
                 "custom_fields_schema": None,

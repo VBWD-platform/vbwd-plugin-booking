@@ -16,7 +16,6 @@ def _make_resource(name="Dr. Smith", slug="dr-smith", price=Decimal("50.00")):
     resource.name = name
     resource.slug = slug
     resource.price = price
-    resource.currency = "EUR"
     resource.resource_type = "specialist"
     return resource
 
@@ -42,7 +41,9 @@ class TestBookingInvoiceService:
         invoice = service.create_booking_invoice(user_id, resource, booking)
 
         assert invoice.amount == Decimal("50.00")
-        assert invoice.currency == "EUR"
+        # S85.1 (D5): the service no longer sets currency on the invoice — it
+        # inherits the UserInvoice column default (the global operating currency,
+        # applied at persist time).
         assert invoice.status == InvoiceStatus.PENDING
 
     def test_creates_invoice_with_quantity(self):

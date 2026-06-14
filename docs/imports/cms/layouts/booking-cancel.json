@@ -10,13 +10,8 @@
           "type": "header"
         },
         {
-          "label": "",
-          "name": "breadcrumbs",
-          "type": "vue"
-        },
-        {
-          "label": "Resource Detail",
-          "name": "booking-resource-detail",
+          "label": "Booking Cancel",
+          "name": "booking-cancel",
           "type": "vue"
         },
         {
@@ -28,23 +23,18 @@
       "description": null,
       "is_active": true,
       "is_default": false,
-      "name": "Booking Resource Detail",
-      "slug": "booking-resource-detail",
-      "sort_order": 21,
+      "name": "Booking Cancel",
+      "slug": "booking-cancel",
+      "sort_order": 24,
       "widget_assignments": [
         {
-          "area_name": "booking-resource-detail",
-          "sort_order": 2,
-          "widget_slug": "booking-resource-detail"
-        },
-        {
-          "area_name": "breadcrumbs",
+          "area_name": "booking-cancel",
           "sort_order": 1,
-          "widget_slug": "breadcrumbs"
+          "widget_slug": "booking-cancel"
         },
         {
           "area_name": "footer",
-          "sort_order": 3,
+          "sort_order": 2,
           "widget_slug": "footer-nav"
         },
         {

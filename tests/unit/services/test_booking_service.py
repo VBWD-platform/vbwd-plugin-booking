@@ -26,7 +26,6 @@ def _make_resource(
     resource.capacity = capacity
     resource.is_active = is_active
     resource.price = price
-    resource.currency = "EUR"
     resource.resource_type = "specialist"
     return resource
 

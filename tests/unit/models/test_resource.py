@@ -118,8 +118,7 @@ class TestBookableResource:
         resource.custom_schema = schema
         resource.capacity = 10
         resource.slot_duration_minutes = 60
-        resource.price = Decimal("25.00")
-        resource.currency = "EUR"
+        resource.price = 25.0
         resource.price_unit = "per_hour"
         resource.is_active = True
         resource.availability = {}
@@ -131,6 +130,6 @@ class TestBookableResource:
         assert result["name"] == "Meeting Room A"
         assert result["resource_type"] == "space"
         assert result["capacity"] == 10
-        assert result["price"] == "25.00"
+        assert result["price"] == 25.0
         assert result["price_unit"] == "per_hour"
         assert result["categories"] == []

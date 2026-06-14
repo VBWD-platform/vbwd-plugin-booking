@@ -59,7 +59,6 @@ def _make_resource(db, price="100.00"):
         slug=f"court-{uuid4().hex[:8]}",
         capacity=10,
         price=Decimal(price),
-        currency="EUR",
     )
     db.session.add(resource)
     db.session.commit()

@@ -32,7 +32,6 @@ def _create_resource(db):
         capacity=1,
         slot_duration_minutes=60,
         price=50,
-        currency="EUR",
         is_active=True,
     )
     db.session.add(resource)

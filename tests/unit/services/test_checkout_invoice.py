@@ -15,7 +15,6 @@ def _make_resource(
     name="Dr. Smith",
     slug="dr-smith",
     price=Decimal("50.00"),
-    currency="EUR",
     custom_schema=None,
 ):
     resource = MagicMock()
@@ -23,7 +22,6 @@ def _make_resource(
     resource.name = name
     resource.slug = slug
     resource.price = price
-    resource.currency = currency
     resource.custom_schema = custom_schema
     return resource
 
@@ -44,7 +42,8 @@ class TestCreateCheckoutInvoice:
         )
 
         assert invoice.amount == Decimal("50.00")
-        assert invoice.currency == "EUR"
+        # S85.1 (D5): the service no longer sets currency — it inherits the
+        # UserInvoice column default at persist time.
         assert invoice.status == InvoiceStatus.PENDING
 
     def test_creates_invoice_with_quantity_multiplied(self):

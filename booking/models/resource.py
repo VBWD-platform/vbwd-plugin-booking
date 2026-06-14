@@ -1,7 +1,29 @@
 """BookableResource model."""
+from typing import Optional
+
 from sqlalchemy.dialects.postgresql import UUID
 from vbwd.extensions import db
 from vbwd.models.base import BaseModel
+
+
+# S72.4: a per-resource netto/brutto price-display override. ``None`` inherits
+# the global ``prices_display_mode`` core setting; ``"netto"``/``"brutto"``
+# override it. Kept in sync with the core ``PRICES_DISPLAY_MODES`` enum.
+PRICE_DISPLAY_MODE_OVERRIDES = ("netto", "brutto")
+
+
+def validate_price_display_mode(value: Optional[str]) -> Optional[str]:
+    """Return ``value`` if it is a valid override, else raise ``ValueError``.
+
+    ``None`` (inherit the global setting) and the two enum values are accepted;
+    any other value is rejected so the admin route can map it to a 400.
+    """
+    if value is None or value in PRICE_DISPLAY_MODE_OVERRIDES:
+        return value
+    raise ValueError(
+        "price_display_mode must be one of "
+        f"{(None,) + PRICE_DISPLAY_MODE_OVERRIDES}, got {value!r}"
+    )
 
 
 booking_resource_category_link = db.Table(
@@ -16,6 +38,28 @@ booking_resource_category_link = db.Table(
         "category_id",
         UUID(as_uuid=True),
         db.ForeignKey("booking_resource_category.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
+# Many-to-many join to the CORE tax catalog (``vbwd_tax``). The ``tax_id`` FK
+# uses ``ON DELETE RESTRICT`` so deleting a tax that is assigned to a resource is
+# rejected by the database (S72.3) rather than silently dropping the link; the
+# ``resource_id`` FK uses ``ON DELETE CASCADE`` so deleting a resource tidies its
+# own links.
+booking_resource_tax = db.Table(
+    "booking_resource_tax",
+    db.Column(
+        "resource_id",
+        UUID(as_uuid=True),
+        db.ForeignKey("booking_resource.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    db.Column(
+        "tax_id",
+        UUID(as_uuid=True),
+        db.ForeignKey("vbwd_tax.id", ondelete="RESTRICT"),
         primary_key=True,
     ),
 )
@@ -36,8 +80,9 @@ class BookableResource(BaseModel):
     )
     capacity = db.Column(db.Integer, nullable=False, default=1)
     slot_duration_minutes = db.Column(db.Integer, nullable=True)
-    price = db.Column(db.Numeric(10, 2), nullable=False)
-    currency = db.Column(db.String(3), default="EUR")
+    # S85.1 (D4/D5): the single price double (full precision, never rounded in
+    # code); the currency is the global ``default_currency`` (S84).
+    price = db.Column(db.Float, nullable=False)
     price_unit = db.Column(db.String(50), default="per_slot")
     availability = db.Column(db.JSON, nullable=False, default=dict)
     custom_fields_schema = db.Column(db.JSON, nullable=True)
@@ -45,6 +90,10 @@ class BookableResource(BaseModel):
     config = db.Column(db.JSON, nullable=True, default=dict)
     is_active = db.Column(db.Boolean, default=True)
     sort_order = db.Column(db.Integer, default=0)
+
+    # S72.4: per-resource netto/brutto override. ``NULL`` inherits the global
+    # ``prices_display_mode`` core setting; ``"netto"``/``"brutto"`` override it.
+    price_display_mode = db.Column(db.String(8), nullable=True)
 
     custom_schema = db.relationship(
         "BookingCustomSchema",
@@ -57,6 +106,19 @@ class BookableResource(BaseModel):
         backref="resources",
         lazy="selectin",
     )
+
+    # Assigned core taxes (M2M). When present these take precedence over the
+    # bare net price for pricing (S72.3).
+    taxes = db.relationship(
+        "Tax",
+        secondary=booking_resource_tax,
+        lazy="selectin",
+    )
+
+    @property
+    def raw_price(self) -> float:
+        """The stored price as a float (the ``Priceable`` protocol member)."""
+        return float(self.price) if self.price is not None else 0.0
 
     def _get_images(self) -> list:
         try:
@@ -93,6 +155,19 @@ class BookableResource(BaseModel):
             for cat in categories
         ]
 
+    def _serialize_taxes(self) -> list:
+        """Serialize assigned core taxes to ``{id, code, name, rate}``."""
+        taxes = getattr(self, "taxes", None) or []
+        return [
+            {
+                "id": str(tax.id),
+                "code": tax.code,
+                "name": tax.name,
+                "rate": str(tax.rate),
+            }
+            for tax in taxes
+        ]
+
     def to_dict(self) -> dict:
         # Schema provides both type label and custom fields
         if self.custom_schema:
@@ -106,6 +181,7 @@ class BookableResource(BaseModel):
             custom_fields = self.custom_fields_schema
             custom_schema_id = None
 
+        taxes = self._serialize_taxes()
         return {
             "id": str(self.id),
             "name": self.name,
@@ -116,8 +192,7 @@ class BookableResource(BaseModel):
             "custom_schema_id": custom_schema_id,
             "capacity": self.capacity,
             "slot_duration_minutes": self.slot_duration_minutes,
-            "price": str(self.price),
-            "currency": self.currency,
+            "price": self.raw_price,
             "price_unit": self.price_unit,
             "availability": self.availability or {},
             "custom_fields_schema": custom_fields,
@@ -126,7 +201,10 @@ class BookableResource(BaseModel):
             "config": self.config or {},
             "is_active": self.is_active,
             "sort_order": self.sort_order,
+            "price_display_mode": self.price_display_mode,
             "categories": self._serialize_categories(),
+            "tax_ids": [tax["id"] for tax in taxes],
+            "taxes": taxes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

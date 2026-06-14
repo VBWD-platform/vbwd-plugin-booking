@@ -28,8 +28,46 @@ from plugins.booking.booking.services.booking_service import (
 from plugins.booking.booking.services.booking_invoice_service import (
     BookingInvoiceService,
 )
+from plugins.booking.booking.services.resource_pricing_service import (
+    ResourcePricingService,
+)
+from vbwd.models.tax import Tax
 
 booking_bp = Blueprint("booking", __name__)
+
+# S85.1 (D5): resources no longer carry a per-row currency; the operating
+# currency is the global ``default_currency`` (S84). Until S85.2 routes
+# everything through the ``PriceFactory``, this preserves the prior behaviour
+# (the resource currency always defaulted to "EUR").
+DEFAULT_CURRENCY_CODE = "EUR"
+
+
+class TaxAssignmentError(ValueError):
+    """Raised when a requested ``tax_ids`` entry is unknown or inactive."""
+
+
+def _resolve_active_taxes(tax_ids):
+    """Resolve ``tax_ids`` to active core taxes, deduped and order-preserving.
+
+    Raises ``TaxAssignmentError`` if any id is unknown or its tax is inactive.
+    """
+    deduped = list(dict.fromkeys(tax_ids))
+    if not deduped:
+        return []
+
+    found = {
+        str(tax.id): tax
+        for tax in db.session.query(Tax).filter(Tax.id.in_(deduped)).all()
+    }
+    resolved = []
+    for tax_id in deduped:
+        tax = found.get(str(tax_id))
+        if tax is None:
+            raise TaxAssignmentError(f"Unknown tax: {tax_id}")
+        if not tax.is_active:
+            raise TaxAssignmentError(f"Tax is not active: {tax_id}")
+        resolved.append(tax)
+    return resolved
 
 
 def _booking_service() -> BookingService:
@@ -39,7 +77,9 @@ def _booking_service() -> BookingService:
         booking_repository=BookingRepository(db.session),
         resource_repository=ResourceRepository(db.session),
         availability_service=AvailabilityService(BookingRepository(db.session)),
-        invoice_service=BookingInvoiceService(db.session),
+        invoice_service=BookingInvoiceService(
+            db.session, price_factory=current_app.container.price_factory()
+        ),
         event_bus=current_app.extensions.get("event_bus"),
     )
 
@@ -115,7 +155,16 @@ def list_resources():
     else:
         resources = repo.find_all(active_only=True)
 
-    return jsonify({"resources": [resource.to_dict() for resource in resources]})
+    pricing_service = ResourcePricingService(current_app.container.price_factory())
+    resource_dicts = []
+    for resource in resources:
+        resource_dict = resource.to_dict()
+        resource_dict["pricing"] = pricing_service.get_resource_pricing_payload(
+            resource
+        )
+        resource_dicts.append(resource_dict)
+
+    return jsonify({"resources": resource_dicts})
 
 
 @booking_bp.route("/api/v1/booking/resources/<slug>", methods=["GET"])
@@ -123,7 +172,23 @@ def get_resource(slug):
     resource = _resource_repo().find_by_slug(slug)
     if not resource:
         return jsonify({"error": "Resource not found"}), 404
-    return jsonify(resource.to_dict())
+    resource_dict = resource.to_dict()
+    resource_dict["pricing"] = ResourcePricingService(
+        current_app.container.price_factory()
+    ).get_resource_pricing_payload(resource)
+
+    # S77 — append the generic tags / custom fields (opt-in, no model import).
+    # The resource detail reads these keys + the field defs off the payload.
+    from vbwd.services.tags_and_custom_fields import (
+        append_tags_and_custom_fields,
+        resolve_tags_and_custom_fields,
+    )
+
+    append_tags_and_custom_fields(resource_dict, "booking_resource", resource.id)
+    resource_dict[
+        "custom_field_defs"
+    ] = resolve_tags_and_custom_fields().get_field_defs("booking_resource")
+    return jsonify(resource_dict)
 
 
 @booking_bp.route("/api/v1/booking/resources/<slug>/availability", methods=["GET"])
@@ -198,13 +263,17 @@ def booking_checkout():
         resolve_price_adjustment,
     )
 
-    subtotal = Decimal(str(resource.price)) * quantity
+    # S85.2 (D1/D8): the charge per unit is the computed Price.brutto, resolved
+    # through the core PriceFactory (honours the global prices_mode_in_db).
+    price_factory = current_app.container.price_factory()
+    unit_brutto = Decimal(str(price_factory.get_price_from_object(resource).brutto))
+    subtotal = unit_brutto * quantity
     price_result = resolve_price_adjustment(
         code=data.get("coupon_code"),
         subtotal=subtotal,
         user_id=str(g.user_id) if g.user_id else None,
         scope="BOOKING",
-        currency=resource.currency or "EUR",
+        currency=DEFAULT_CURRENCY_CODE,
     )
     if not price_result.valid:
         return (
@@ -212,7 +281,9 @@ def booking_checkout():
             400,
         )
 
-    invoice = BookingInvoiceService(db.session).create_checkout_invoice(
+    invoice = BookingInvoiceService(
+        db.session, price_factory=price_factory
+    ).create_checkout_invoice(
         user_id=g.user_id,
         resource=resource,
         start_at=start_at,
@@ -388,8 +459,7 @@ def _build_booking_pdf_context(booking, resource, user, invoice=None) -> dict:
 
     price_display = ""
     if resource and resource.price:
-        currency = resource.currency or "EUR"
-        price_display = f"{Decimal(str(resource.price)):.2f} {currency}"
+        price_display = f"{Decimal(str(resource.price)):.2f} {DEFAULT_CURRENCY_CODE}"
 
     is_paid = False
     invoice_number = None
@@ -925,17 +995,25 @@ def admin_create_resource():
     if not data:
         return jsonify({"error": "Request body required"}), 400
 
-    from plugins.booking.booking.models.resource import BookableResource
+    from plugins.booking.booking.models.resource import (
+        BookableResource,
+        validate_price_display_mode,
+    )
+
+    try:
+        price_display_mode = validate_price_display_mode(data.get("price_display_mode"))
+    except ValueError as mode_error:
+        return jsonify({"error": str(mode_error)}), 400
 
     resource = BookableResource()
     resource.name = data["name"]
     resource.slug = data["slug"]
+    resource.price_display_mode = price_display_mode
     resource.description = data.get("description")
     resource.custom_schema_id = data.get("custom_schema_id")
     resource.capacity = data.get("capacity", 1)
     resource.slot_duration_minutes = data.get("slot_duration_minutes")
-    resource.price = data["price"]
-    resource.currency = data.get("currency", "EUR")
+    resource.price = float(data["price"])
     resource.price_unit = data.get("price_unit", "per_slot")
     resource.availability = data.get("availability", {})
     resource.custom_fields_schema = data.get("custom_fields_schema")
@@ -951,6 +1029,12 @@ def admin_create_resource():
             category = _category_repo().find_by_id(category_id)
             if category:
                 resource.categories.append(category)
+
+    if "tax_ids" in data:
+        try:
+            resource.taxes = _resolve_active_taxes(data["tax_ids"])
+        except TaxAssignmentError as tax_error:
+            return jsonify({"error": str(tax_error)}), 400
 
     _resource_repo().save(resource)
     db.session.commit()
@@ -987,6 +1071,25 @@ def admin_update_resource(resource_id):
     for field in updatable_fields:
         if field in data:
             setattr(resource, field, data[field])
+
+    if "price_display_mode" in data:
+        from plugins.booking.booking.models.resource import (
+            validate_price_display_mode,
+        )
+
+        try:
+            resource.price_display_mode = validate_price_display_mode(
+                data["price_display_mode"]
+            )
+        except ValueError as mode_error:
+            return jsonify({"error": str(mode_error)}), 400
+
+    if "tax_ids" in data:
+        # Replace-set: the new assignment fully supersedes the old one.
+        try:
+            resource.taxes = _resolve_active_taxes(data["tax_ids"])
+        except TaxAssignmentError as tax_error:
+            return jsonify({"error": str(tax_error)}), 400
 
     db.session.commit()
     return jsonify(resource.to_dict())

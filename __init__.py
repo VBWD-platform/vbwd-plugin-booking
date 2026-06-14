@@ -107,6 +107,27 @@ class BookingPlugin(BasePlugin):
 
         self._register_data_exchangers()
 
+        # S77 — register booking_resource as taggable/custom-field-able so the
+        # core value endpoints resolve it (gated by booking.resources.manage)
+        # and the resource serializer can append tags / custom fields.
+        from vbwd.services.entity_type_registry import (
+            EntityTypeRegistration,
+            register_entity_type,
+        )
+
+        register_entity_type(
+            EntityTypeRegistration(
+                "booking_resource", "Booking resource", "booking.resources.manage"
+            )
+        )
+
+        # S88 — contribute the booking catalog seed to ``flask reset-demo``
+        # through the agnostic demo-data registry (core imports no booking model).
+        from vbwd.services.demo_data_registry import register_catalog_seeder
+        from plugins.booking.booking.demo_seed import seed_catalog
+
+        register_catalog_seeder(seed_catalog)
+
         # S09 — register the plugin's repositories with the DI container so
         # the payment handler / completion service / consumers can resolve
         # them via `current_app.container.booking_<name>_repository()`
@@ -180,6 +201,12 @@ class BookingPlugin(BasePlugin):
             scheduler_logger.warning(
                 "[booking] Failed to start scheduler: %s", scheduler_error
             )
+
+    def on_disable(self):
+        super().on_disable()
+        from vbwd.services.entity_type_registry import unregister_entity_type
+
+        unregister_entity_type("booking_resource")
 
     def register_event_handlers(self, event_bus):
         import logging
