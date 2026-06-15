@@ -54,19 +54,17 @@ def app():
 
     limiter.reset()
 
-    # Build the full schema exactly ONCE for the whole session, resetting the
-    # public schema first (clearing any table or ENUM type left by a prior
-    # crashed run or a sibling suite sharing this ``*_test`` DB). A per-test
-    # create_all()/drop_all() strands standalone PG ENUM types and races other
-    # suites on the shared catalog — see vbwd/testing/integration_db.py. Each
-    # test then isolates by TRUNCATE-ing data, not by dropping the schema.
+    # Build the schema once per process (create_all, checkfirst — never drops,
+    # so it cannot wipe data) and commit baseline reference rows once. Each test
+    # then isolates itself via a rolled-back transaction (no TRUNCATE, no DROP) —
+    # see vbwd/testing/integration_db.py.
     with app.app_context():
         from vbwd.extensions import db as _db
 
         _import_schema_models()
-        from vbwd.testing.integration_db import reset_schema_and_create_all
+        from vbwd.testing.integration_db import ensure_schema_and_baseline
 
-        reset_schema_and_create_all(_db)
+        ensure_schema_and_baseline(_db)
 
     yield app
 
@@ -100,25 +98,6 @@ def _import_schema_models():
         pass
 
 
-def _seed_canonical_roles(db) -> None:
-    """Re-seed the ``vbwd_user_role`` catalog so the User.role FK resolves.
-
-    The role catalog is a core enum-backed table; integration ``TRUNCATE``
-    empties it, so the canonical rows are restored before any User is created.
-    """
-    from sqlalchemy import inspect
-
-    table_names = inspect(db.engine).get_table_names(schema="public")
-    if "vbwd_user_role" not in table_names:
-        return
-
-    from vbwd.models.user_role import RoleDefinition, canonical_role_rows
-
-    if not db.session.query(RoleDefinition).first():
-        db.session.bulk_insert_mappings(RoleDefinition, canonical_role_rows())
-        db.session.commit()
-
-
 def _seed_default_currency(db) -> None:
     """Seed the baseline EUR currency so the ``PriceFactory`` resolves a code."""
     from decimal import Decimal
@@ -147,46 +126,46 @@ def client(app):
 
 @pytest.fixture
 def db(app):
+    """Isolate each test in a rolled-back transaction (self-cleaning, no wipe).
+
+    The schema + canonical RBAC rows are built once in the ``app`` fixture; each
+    test runs inside a transaction that is rolled back at teardown, so nothing it
+    writes persists. The admin user the integration tests log in with and the
+    baseline EUR currency are seeded inside that transaction so the route paths
+    see them on the same connection; they roll back with the rest of the test's
+    writes. See vbwd/testing/integration_db.py.
+    """
     from vbwd.extensions import db
 
     with app.app_context():
-        # Isolate each test by clearing data (not schema) — the schema was built
-        # once in the session ``app`` fixture.
-        from vbwd.testing.integration_db import truncate_all_tables
+        from vbwd.testing.integration_db import rollback_isolation
 
-        truncate_all_tables(db)
+        with rollback_isolation(db):
+            # Seed admin user so integration tests can log in. The canonical
+            # role rows the User.role FK needs are committed once by
+            # ``ensure_schema_and_baseline`` in the ``app`` fixture.
+            from vbwd.testing.test_data_seeder import TestDataSeeder
 
-        # The core ``vbwd_user.role`` FK references ``vbwd_user_role``; the
-        # truncate above empties that catalog, so re-seed the canonical role
-        # rows before any User (incl. the seeder's admin) is created. Mirrors
-        # the subscription conftest.
-        _seed_canonical_roles(db)
+            seeder = TestDataSeeder(db.session)
+            seeder.seed()
 
-        # Seed admin user so integration tests can log in
-        from vbwd.testing.test_data_seeder import TestDataSeeder
+            # S85.2: booking pricing now goes through the core PriceFactory,
+            # which resolves the default currency from the catalog (S84). Seed
+            # the baseline EUR row through the model so the factory has a code.
+            _seed_default_currency(db)
 
-        seeder = TestDataSeeder(db.session)
-        seeder.seed()
+            # Deduplicate event bus subscribers (module singleton accumulates
+            # across tests). Independent of the DB transaction.
+            from vbwd.events.bus import event_bus
 
-        # S85.2: booking pricing now goes through the core PriceFactory, which
-        # resolves the default currency from the catalog (S84). Seed the
-        # baseline EUR row through the model so the factory has a code.
-        _seed_default_currency(db)
+            for event_name in list(event_bus._subscribers.keys()):
+                seen = set()
+                unique = []
+                for callback in event_bus._subscribers[event_name]:
+                    key = f"{callback.__module__}.{callback.__qualname__}"
+                    if key not in seen:
+                        seen.add(key)
+                        unique.append(callback)
+                event_bus._subscribers[event_name] = unique
 
-        # Deduplicate event bus subscribers (module singleton accumulates across tests)
-        from vbwd.events.bus import event_bus
-
-        for event_name in list(event_bus._subscribers.keys()):
-            seen = set()
-            unique = []
-            for callback in event_bus._subscribers[event_name]:
-                key = f"{callback.__module__}.{callback.__qualname__}"
-                if key not in seen:
-                    seen.add(key)
-                    unique.append(callback)
-            event_bus._subscribers[event_name] = unique
-
-        yield db
-
-        db.session.rollback()
-        db.session.remove()
+            yield db
