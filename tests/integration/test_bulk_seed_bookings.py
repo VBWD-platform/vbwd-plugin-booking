@@ -56,11 +56,7 @@ def _loadtest_bookings(session):
     resource = _seed_resource(session)
     if resource is None:
         return []
-    return (
-        session.query(Booking)
-        .filter(Booking.resource_id == resource.id)
-        .all()
-    )
+    return session.query(Booking).filter(Booking.resource_id == resource.id).all()
 
 
 class TestBulkSeedBookings:
@@ -86,18 +82,16 @@ class TestBulkSeedBookings:
         db.session.commit()
 
         resource_id = _seed_resource(db.session).id
-        exported = exchanger.export(
-            ExportSelector(ids=None), include_pii=True
-        ).rows
+        exported = exchanger.export(ExportSelector(ids=None), include_pii=True).rows
         loadtest_rows = [
             row for row in exported if str(row["resource_id"]) == str(resource_id)
         ]
         assert len(loadtest_rows) == 10
 
         # Wipe the load-test reservations (the resource + user stay) and re-import.
-        db.session.query(Booking).filter(
-            Booking.resource_id == resource_id
-        ).delete(synchronize_session=False)
+        db.session.query(Booking).filter(Booking.resource_id == resource_id).delete(
+            synchronize_session=False
+        )
         db.session.commit()
         assert _loadtest_bookings(db.session) == []
 
