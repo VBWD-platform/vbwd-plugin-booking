@@ -31,13 +31,38 @@ Design notes:
 * **No core change** — registration happens in ``BookingPlugin.on_enable``
   through the shared ``db.session``; core imports no ``plugins.*`` module.
 
+S89.1 (load-test bulk seed) for ``bookings`` — now shipped (Slice B):
+
+``bookings`` does not fit the slug-prefix seam the flat shop/subscription
+catalog rows use, for two structural reasons. Both are handled with plugin-side
+overrides only — **no core change**:
+
+* ``Booking``'s natural key is the **UUID ``id``**, not a settable slug. The base
+  ``bulk_seed`` writes ``loadtest-bookings-<i>`` into the natural-key column and
+  matches the ``loadtest-`` prefix for idempotency + ``--reset``; a UUID column
+  cannot hold that string. :class:`_BookingsExchanger` overrides
+  ``_loadtest_natural_key`` to emit a **deterministic UUID5** (fixed namespace +
+  ``loadtest-bookings-<index>``) so the same index always maps to the same id —
+  idempotency + ``--reset`` work by id, recomputable for any count.
+* A ``Booking`` also requires a non-null ``user_id`` FK into the core
+  ``vbwd_user`` table plus a valid ``resource_id`` and time slot. The seed
+  provisions **one shared ``loadtest-`` ``BookableResource``** through the
+  booking resource repository (no raw SQL) and **reuses an existing user** read
+  from the core ``User`` table (the plugin already reads ``vbwd_user`` to
+  resolve booking customers — it never *creates* a core user). Load-test
+  bookings are identified by their FK to that one resource (a stable, queryable
+  marker on a column the model already has), so ``--reset`` drops exactly those
+  reservations + the resource when unreferenced, never touching real rows.
+
 Engineering requirements (binding, restated): TDD-first; DevOps-first; SOLID
 (one exchanger, narrow port); DI (session injected); DRY; Liskov; clean code;
 no overengineering. Quality guard: ``bin/pre-commit-check.sh --plugin booking
 --full``.
 """
+import uuid
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Set
 
 from vbwd.services.data_exchange.base_model_exchanger import BaseModelExchanger
 from vbwd.services.data_exchange.port import (
@@ -79,6 +104,65 @@ class _SessionModelRepository:
     def delete_all(self) -> None:
         self._session.query(self._model_class).delete()
 
+    # ── heavy-load scale hooks (S89.1) ────────────────────────────────────
+    # The base exchanger calls these via ``getattr`` when present so a 100k
+    # export/reset is O(batches), not O(N²). Absent → full ``find_all`` scans.
+    # These speed the slug-keyed ``booking_resources`` / ``booking_categories``
+    # entities. ``bookings`` is UUID-keyed and overrides the load-test
+    # identification directly (see :class:`_BookingsExchanger`), so these prefix
+    # helpers stay UUID-safe (return empty / 0) for it as a defensive fallback.
+
+    def iter_rows(self, batch_size: int) -> Any:
+        """Yield rows in ``yield_per`` pages (bounded memory)."""
+        return (
+            self._session.query(self._model_class)
+            .yield_per(batch_size)
+            .enable_eagerloads(False)
+        )
+
+    def bulk_add(self, instances: List[Any]) -> None:
+        """Insert a batch through the unit of work (one flush per batch).
+
+        Uses ``add_all`` + ``flush`` rather than ``bulk_save_objects`` so any
+        relationship-carrying rows (a resource's category M2M) persist; still a
+        single flush per batch (O(batches)). The caller commits.
+        """
+        self._session.add_all(instances)
+        self._session.flush()
+
+    def find_natural_keys_with_prefix(self, prefix: str) -> List[Any]:
+        """Return natural-key values starting with ``prefix`` (slug-keyed entities).
+
+        For the UUID-keyed ``bookings`` entity the natural key is ``id``, which
+        carries no ``loadtest-`` prefix, so this returns nothing there;
+        ``bookings`` seed identification is overridden in :class:`_BookingsExchanger`.
+        """
+        column = getattr(self._model_class, self._natural_key)
+        try:
+            rows = self._session.query(column).filter(column.like(f"{prefix}%")).all()
+        except Exception:
+            # A non-text natural key (UUID ``id``) cannot match a string prefix;
+            # treat it as "no load-test rows" rather than crashing the caller.
+            return []
+        return [row[0] for row in rows]
+
+    def delete_natural_keys_with_prefix(self, prefix: str) -> int:
+        """Delete every row whose natural key starts with ``prefix``. Returns count.
+
+        Scoped to this model + the ``loadtest-`` prefix, so it never touches
+        real/demo data. ``synchronize_session=False`` keeps it one statement
+        (the caller commits). A non-text natural key matches nothing (returns 0).
+        """
+        column = getattr(self._model_class, self._natural_key)
+        try:
+            return (
+                self._session.query(self._model_class)
+                .filter(column.like(f"{prefix}%"))
+                .delete(synchronize_session=False)
+            )
+        except Exception:
+            return 0
+
 
 class _PermissionMappedModelExchanger(BaseModelExchanger):
     """A ``BaseModelExchanger`` whose perms map onto existing booking perms.
@@ -106,6 +190,214 @@ class _PermissionMappedModelExchanger(BaseModelExchanger):
     @property
     def import_permission(self) -> str:
         return self._manage_permission
+
+
+class BookingSeedError(Exception):
+    """Raised when a ``bookings`` load-test seed cannot satisfy a required FK.
+
+    The only non-synthesisable prerequisite is the ``user_id`` FK: the seed
+    reuses an existing core user and never creates one (the agnosticism rule —
+    user provisioning is a core concern). If the instance has no user at all,
+    the seed stops with this error rather than inventing a core row.
+    """
+
+
+class _BookingsExchanger(_PermissionMappedModelExchanger):
+    """``bookings`` load-test seed over the UUID ``id`` natural key (S89.1 Slice B).
+
+    Overrides the seed seam so ``bulk_seed`` produces valid, round-trippable
+    reservations without a settable slug:
+
+    * ``_loadtest_natural_key`` → a deterministic UUID5 per index (stable id ⇒
+      idempotency + ``--reset`` by id, recomputable for any count).
+    * ``_seed_row`` → a valid reservation: the deterministic id, the one shared
+      ``loadtest-`` resource, a reused existing user, and a deterministic slot
+      ``base + index·slot_duration`` (no overlap → passes reservation rules).
+    * load-test rows are identified by their FK to the one ``loadtest-``
+      resource (a queryable marker the model already has — no new column), so
+      ``_existing_loadtest_keys`` / ``_reset_loadtest_rows`` scope to exactly
+      those reservations and never touch real bookings.
+
+    Liskov: the base ``bulk_seed`` contract (idempotent, batched, reset-clean)
+    is preserved — only how a load-test row is built + identified changes.
+    """
+
+    # Fixed namespace so a given index always maps to the same booking id across
+    # processes/runs (idempotency must survive a fresh exchanger / new request).
+    _LOADTEST_UUID_NAMESPACE = uuid.UUID("6f1d0c2e-9b3a-4d5e-8a7c-000000000089")
+
+    # One shared load-test resource every seeded reservation references.
+    _SEED_RESOURCE_SLUG = "loadtest-bookings-resource"
+    _SEED_RESOURCE_NAME = "Load-test bookings resource"
+    _SEED_RESOURCE_PRICE = 10.0
+    _SEED_RESOURCE_CAPACITY = 1000000
+
+    # A fixed base instant + a fixed slot length; consecutive indices occupy
+    # consecutive non-overlapping slots so capacity is never the limiter.
+    _SEED_SLOT_BASE = datetime(2030, 1, 1, 0, 0, 0)
+    _SEED_SLOT_MINUTES = 30
+
+    # Caches of the one shared resource + the reused user id (``None`` until the
+    # first row resolves them). Declared so mypy sees the attributes. Caching
+    # keeps a 100k seed at one resource lookup + one user lookup, not O(N).
+    _seed_resource: Optional[Any]
+    _seed_user_id: Optional[Any]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._seed_resource = None
+        self._seed_user_id = None
+
+    # ── seed overrides ─────────────────────────────────────────────────────
+
+    def _loadtest_natural_key(self, index: int) -> str:
+        return str(
+            uuid.uuid5(self._LOADTEST_UUID_NAMESPACE, f"loadtest-bookings-{index}")
+        )
+
+    def _seed_row(self, index: int, natural_value: str) -> dict:
+        resource = self._ensure_seed_resource()
+        user_id = self._resolve_seed_user_id()
+        start_at = self._SEED_SLOT_BASE + timedelta(
+            minutes=self._SEED_SLOT_MINUTES * index
+        )
+        end_at = start_at + timedelta(minutes=self._SEED_SLOT_MINUTES)
+        return {
+            "id": natural_value,
+            "resource_id": resource.id,
+            "user_id": user_id,
+            "start_at": start_at,
+            "end_at": end_at,
+            "status": "confirmed",
+            "quantity": 1,
+        }
+
+    def _existing_loadtest_keys(self) -> Set[str]:
+        """Booking ids already attached to the one shared load-test resource.
+
+        No resource yet ⇒ no load-test bookings ⇒ empty set (this never creates
+        the resource — that is the lazy job of ``_seed_row``).
+        """
+        from plugins.booking.booking.models.booking import Booking
+
+        resource = self._find_seed_resource()
+        if resource is None:
+            return set()
+        rows = (
+            self._session.query(Booking.id)
+            .filter(Booking.resource_id == resource.id)
+            .all()
+        )
+        return {str(row[0]) for row in rows}
+
+    def _reset_loadtest_rows(self) -> int:
+        """Drop the load-test reservations, then the resource if now unreferenced.
+
+        Scoped to the one shared ``loadtest-`` resource so a real booking + real
+        resource are never touched. The cached resource is cleared so the next
+        seed re-creates it cleanly.
+        """
+        from plugins.booking.booking.models.booking import Booking
+
+        resource = self._find_seed_resource()
+        if resource is None:
+            self._seed_resource = None
+            return 0
+        deleted = (
+            self._session.query(Booking)
+            .filter(Booking.resource_id == resource.id)
+            .delete(synchronize_session=False)
+        )
+        self._drop_seed_resource_if_unreferenced(resource.id)
+        self._seed_resource = None
+        return deleted
+
+    # ── prerequisites ──────────────────────────────────────────────────────
+
+    def _ensure_seed_resource(self) -> Any:
+        """Return the one shared ``loadtest-`` resource, creating it once.
+
+        Created through the booking ``ResourceRepository`` (no raw SQL) and
+        cached so a large seed shares one resource + a single lookup. Idempotent:
+        an existing resource (this run or a prior seed) is reused.
+        """
+        if self._seed_resource is not None:
+            return self._seed_resource
+        from plugins.booking.booking.models.resource import BookableResource
+        from plugins.booking.booking.repositories.resource_repository import (
+            ResourceRepository,
+        )
+
+        repository = ResourceRepository(self._session)
+        resource = repository.find_by_slug(self._SEED_RESOURCE_SLUG)
+        if resource is None:
+            resource = BookableResource(
+                name=self._SEED_RESOURCE_NAME,
+                slug=self._SEED_RESOURCE_SLUG,
+                description="Shared resource for load-test bookings (S89.1).",
+                capacity=self._SEED_RESOURCE_CAPACITY,
+                slot_duration_minutes=self._SEED_SLOT_MINUTES,
+                price=self._SEED_RESOURCE_PRICE,
+                availability={},
+            )
+            repository.save(resource)
+        self._seed_resource = resource
+        return resource
+
+    def _find_seed_resource(self) -> Any:
+        from plugins.booking.booking.models.resource import BookableResource
+
+        return (
+            self._session.query(BookableResource)
+            .filter(BookableResource.slug == self._SEED_RESOURCE_SLUG)
+            .first()
+        )
+
+    def _resolve_seed_user_id(self) -> Any:
+        """Return an existing core user's id to own the load-test reservations.
+
+        Reuses the earliest existing user (deterministic) — the plugin already
+        reads ``vbwd_user`` to resolve booking customers; it never *creates* a
+        core user (provisioning is a core concern). If the instance has no user
+        at all, the seed stops with :class:`BookingSeedError` rather than
+        inventing a core row.
+        """
+        if self._seed_user_id is not None:
+            return self._seed_user_id
+        from vbwd.models.user import User
+
+        user_id = (
+            self._session.query(User.id)
+            .order_by(User.created_at.asc())
+            .limit(1)
+            .scalar()
+        )
+        if user_id is None:
+            raise BookingSeedError(
+                "bookings load-test seed needs at least one existing user to own "
+                "the reservations (it reuses a user, never creates one); seed/demo "
+                "users first"
+            )
+        self._seed_user_id = user_id
+        return user_id
+
+    def _drop_seed_resource_if_unreferenced(self, resource_id: Any) -> None:
+        from plugins.booking.booking.models.booking import Booking
+        from plugins.booking.booking.models.resource import BookableResource
+
+        # Query the DB for any remaining reservation on the resource rather than a
+        # (possibly stale) relationship: the delete above ran with
+        # ``synchronize_session=False``.
+        still_referenced = (
+            self._session.query(Booking.id)
+            .filter(Booking.resource_id == resource_id)
+            .first()
+        )
+        if still_referenced is not None:
+            return
+        resource = self._session.get(BookableResource, resource_id)
+        if resource is not None:
+            self._session.delete(resource)
 
 
 class _BookingCategoryExchanger(_PermissionMappedModelExchanger):
@@ -212,7 +504,7 @@ def build_booking_exchangers(session: Any) -> List[EntityExchanger]:
     )
 
     return [
-        _PermissionMappedModelExchanger(
+        _BookingsExchanger(
             entity_key="bookings",
             label="Bookings",
             cluster=CLUSTER_SALES,
