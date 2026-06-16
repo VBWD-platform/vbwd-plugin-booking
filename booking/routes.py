@@ -1,6 +1,7 @@
 """Booking plugin routes — public + admin."""
 import os
 from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from flask import Blueprint, Response, current_app, jsonify, request, g
 
 from vbwd.extensions import db
@@ -40,6 +41,130 @@ booking_bp = Blueprint("booking", __name__)
 # everything through the ``PriceFactory``, this preserves the prior behaviour
 # (the resource currency always defaulted to "EUR").
 DEFAULT_CURRENCY_CODE = "EUR"
+
+# The cents quantize boundary for splitting a gross discount into its netto /
+# tax portions on the invoice (the only rounding done in the route; per-line tax
+# rounding stays in ``vbwd/pricing/line_tax_fields``).
+_CENTS = Decimal("0.01")
+
+
+def _split_discount_tax_breakdown(resource_breakdown, tax_discount):
+    """Split a negative tax discount per rate, proportional to pre-discount tax.
+
+    ``resource_breakdown`` is the resource line's per-rate ``tax_breakdown``
+    (positive amounts). ``tax_discount`` is the (positive) total tax portion of
+    the gross discount. Returns a per-rate breakdown of NEGATIVE amounts that
+    sums EXACTLY to ``-tax_discount`` (to the cent) — any rounding residual is
+    absorbed into the largest-magnitude component so the aggregated per-rate
+    display reconciles with the invoice tax. General over multiple rates; for the
+    common single-rate booking it is one negative entry at that rate.
+    """
+    positive_amounts = [Decimal(str(entry["amount"])) for entry in resource_breakdown]
+    pre_tax_total = sum(positive_amounts, Decimal("0.00"))
+    if pre_tax_total <= Decimal("0"):
+        return []
+
+    discount_amounts = [
+        (tax_discount * amount / pre_tax_total).quantize(_CENTS, rounding=ROUND_HALF_UP)
+        for amount in positive_amounts
+    ]
+    # Absorb the rounding residual into the largest-magnitude component so the
+    # split sums to exactly ``tax_discount`` (D4: one rounding boundary).
+    residual = tax_discount - sum(discount_amounts, Decimal("0.00"))
+    if residual != Decimal("0.00"):
+        largest_index = max(
+            range(len(discount_amounts)),
+            key=lambda i: abs(discount_amounts[i]),
+        )
+        discount_amounts[largest_index] += residual
+
+    return [
+        {
+            "code": entry["code"],
+            "name": entry["name"],
+            "rate": entry["rate"],
+            "amount": float(-amount),
+        }
+        for entry, amount in zip(resource_breakdown, discount_amounts)
+    ]
+
+
+def _add_discount_line(invoice, price_result, coupon_code):
+    """Append a negative discount line and roll the invoice net/tax/gross up.
+
+    D-DiscountLineShape: the discount is a negative-amount CUSTOM line item
+    (mirrors shop), not an invoice-level field. D-DiscountTax (S96.1): the coupon
+    quotes a GROSS discount that reduces the NETTO; the tax recomputes on the
+    discounted netto. The discount line therefore carries negative ``net_amount``
+    / ``tax_amount`` / per-rate ``tax_breakdown`` (split proportionally to the
+    resource line's pre-discount tax). The invoice ``subtotal`` / ``tax_amount``
+    / ``total_amount`` then ROLL UP from both lines, so across all lines:
+    ``Σ net == subtotal``, ``Σ tax == tax_amount``, and the aggregated per-rate
+    ``tax_breakdown`` equals ``tax_amount`` — the generic invoice view's
+    breakdown reconciles exactly (S96.1 display reconciliation).
+    """
+    import uuid as _uuid
+    from vbwd.models.enums import LineItemType
+    from vbwd.models.invoice_line_item import InvoiceLineItem
+
+    pre_discount_net = Decimal(str(invoice.subtotal))
+    pre_discount_total = Decimal(str(invoice.total_amount))
+    gross_discount = price_result.discount_amount
+
+    # Split the gross discount into its netto / tax portions in proportion to the
+    # invoice's pre-discount split (one cents rounding; tax = gross - net so they
+    # always sum to the gross discount).
+    if pre_discount_total > Decimal("0"):
+        net_discount = (
+            gross_discount * pre_discount_net / pre_discount_total
+        ).quantize(_CENTS, rounding=ROUND_HALF_UP)
+    else:
+        net_discount = gross_discount
+    tax_discount = gross_discount - net_discount
+
+    resource_line = next(
+        line
+        for line in invoice.line_items
+        if not (line.extra_data or {}).get("discount")
+    )
+    discount_breakdown = _split_discount_tax_breakdown(
+        resource_line.tax_breakdown or [], tax_discount
+    )
+
+    discount_line = InvoiceLineItem()
+    discount_line.item_type = LineItemType.CUSTOM
+    discount_line.item_id = _uuid.uuid4()
+    discount_line.description = price_result.label or "Discount"
+    discount_line.quantity = 1
+    discount_line.unit_price = -gross_discount
+    discount_line.total_price = -gross_discount
+    discount_line.net_amount = -net_discount
+    discount_line.tax_amount = -tax_discount
+    discount_line.tax_breakdown = discount_breakdown
+    discount_line.extra_data = {
+        "discount": True,
+        "coupon_code": coupon_code,
+    }
+    # Append to the relationship (cascade persists it + sets the backref/FK);
+    # avoids a double-add from a separate ``session.add``.
+    invoice.line_items.append(discount_line)
+
+    # Roll the invoice totals up from both lines (resource + negative discount),
+    # so the locked D-DiscountTax result is identical and the line sums match the
+    # invoice exactly.
+    invoice.subtotal = sum(
+        (Decimal(str(line.net_amount)) for line in invoice.line_items),
+        Decimal("0.00"),
+    )
+    invoice.tax_amount = sum(
+        (Decimal(str(line.tax_amount)) for line in invoice.line_items),
+        Decimal("0.00"),
+    )
+    invoice.total_amount = sum(
+        (Decimal(str(line.total_price)) for line in invoice.line_items),
+        Decimal("0.00"),
+    )
+    invoice.amount = invoice.total_amount
 
 
 class TaxAssignmentError(ValueError):
@@ -258,7 +383,6 @@ def booking_checkout():
     # Pre-validate a coupon (BOOKING scope) via the generic core seam before
     # creating the invoice — the discount plugin owns the math; booking names no
     # discount domain. No code / discount plugin disabled → no-op.
-    from decimal import Decimal
     from vbwd.services.checkout_price_adjustment_registry import (
         resolve_price_adjustment,
     )
@@ -294,27 +418,7 @@ def booking_checkout():
     )
 
     if price_result.discount_amount > Decimal("0"):
-        import uuid as _uuid
-        from vbwd.models.enums import LineItemType
-        from vbwd.models.invoice_line_item import InvoiceLineItem
-
-        discount_line = InvoiceLineItem()
-        discount_line.invoice_id = invoice.id
-        discount_line.item_type = LineItemType.CUSTOM
-        discount_line.item_id = _uuid.uuid4()
-        discount_line.description = price_result.label or "Discount"
-        discount_line.quantity = 1
-        discount_line.unit_price = -price_result.discount_amount
-        discount_line.total_price = -price_result.discount_amount
-        discount_line.extra_data = {
-            "discount": True,
-            "coupon_code": data.get("coupon_code"),
-        }
-        db.session.add(discount_line)
-        net = subtotal - price_result.discount_amount
-        invoice.amount = net
-        invoice.subtotal = net
-        invoice.total_amount = net
+        _add_discount_line(invoice, price_result, data.get("coupon_code"))
 
     db.session.commit()
 

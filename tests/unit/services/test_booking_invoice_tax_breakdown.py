@@ -107,25 +107,26 @@ def test_brutto_mode_changes_recorded_net_and_tax():
     assert line.total_price == Decimal("119.00")  # gross == charge
 
 
-def test_legacy_no_factory_records_net_equals_gross_empty_breakdown():
+def test_no_factory_raises_no_silent_zero_tax():
+    """S96.2: an absent factory must raise — never silently record tax == 0."""
+    import pytest
+
     session = MagicMock()
     service = BookingInvoiceService(session)  # no factory
     resource = MagicMock()
     resource.id = uuid.uuid4()
     resource.name = "Dr. Smith"
     resource.slug = "dr-smith"
+    resource.raw_price = 50.0
     resource.price = Decimal("50.00")
+    resource.taxes = []
     resource.custom_schema = None
 
-    service.create_checkout_invoice(
-        uuid.uuid4(),
-        resource,
-        datetime(2026, 3, 20, 10, 0),
-        datetime(2026, 3, 20, 10, 30),
-        quantity=1,
-    )
-
-    line = _added_line(session)
-    assert line.net_amount == Decimal("50.00")
-    assert line.tax_amount == Decimal("0.00")
-    assert line.tax_breakdown == []
+    with pytest.raises(ValueError):
+        service.create_checkout_invoice(
+            uuid.uuid4(),
+            resource,
+            datetime(2026, 3, 20, 10, 0),
+            datetime(2026, 3, 20, 10, 30),
+            quantity=1,
+        )

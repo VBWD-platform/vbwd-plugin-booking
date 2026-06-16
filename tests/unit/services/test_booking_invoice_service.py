@@ -5,10 +5,25 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 from vbwd.models.enums import InvoiceStatus, LineItemType
+from vbwd.pricing.price_factory import PriceFactory
 
 from plugins.booking.booking.services.booking_invoice_service import (
     BookingInvoiceService,
 )
+
+
+def _price_factory():
+    """An untaxed (NETTO-mode) PriceFactory — S96.2 requires a wired factory."""
+    settings_reader = MagicMock(return_value={"prices_mode_in_db": "NETTO"})
+    currency_service = MagicMock()
+    currency_service.get_default_currency.return_value = MagicMock(code="EUR")
+    return PriceFactory(
+        settings_reader=settings_reader, currency_service=currency_service
+    )
+
+
+def _service(session, **kwargs):
+    return BookingInvoiceService(session, price_factory=_price_factory(), **kwargs)
 
 
 def _make_resource(name="Dr. Smith", slug="dr-smith", price=Decimal("50.00")):
@@ -16,6 +31,9 @@ def _make_resource(name="Dr. Smith", slug="dr-smith", price=Decimal("50.00")):
     resource.name = name
     resource.slug = slug
     resource.price = price
+    resource.raw_price = float(price)
+    resource.taxes = []
+    resource.custom_schema = None
     resource.resource_type = "specialist"
     return resource
 
@@ -33,7 +51,7 @@ def _make_booking(start_at=None, end_at=None, quantity=1, custom_fields=None):
 class TestBookingInvoiceService:
     def test_creates_invoice_with_correct_amount(self):
         session = MagicMock()
-        service = BookingInvoiceService(session)
+        service = _service(session)
         resource = _make_resource(price=Decimal("50.00"))
         booking = _make_booking(quantity=1)
         user_id = uuid.uuid4()
@@ -48,7 +66,7 @@ class TestBookingInvoiceService:
 
     def test_creates_invoice_with_quantity(self):
         session = MagicMock()
-        service = BookingInvoiceService(session)
+        service = _service(session)
         resource = _make_resource(price=Decimal("89.00"))
         booking = _make_booking(quantity=3)
         user_id = uuid.uuid4()
@@ -59,7 +77,7 @@ class TestBookingInvoiceService:
 
     def test_creates_custom_line_item(self):
         session = MagicMock()
-        service = BookingInvoiceService(session)
+        service = _service(session)
         resource = _make_resource()
         booking = _make_booking()
         user_id = uuid.uuid4()
@@ -77,7 +95,7 @@ class TestBookingInvoiceService:
 
     def test_line_item_metadata_contains_booking_details(self):
         session = MagicMock()
-        service = BookingInvoiceService(session)
+        service = _service(session)
         resource = _make_resource(name="Dr. Johnson", slug="dr-johnson")
         booking = _make_booking(custom_fields={"symptoms": "headache"})
         user_id = uuid.uuid4()
@@ -98,7 +116,7 @@ class TestBookingInvoiceService:
 
     def test_invoice_number_has_prefix(self):
         session = MagicMock()
-        service = BookingInvoiceService(session, invoice_prefix="BK")
+        service = _service(session, invoice_prefix="BK")
         resource = _make_resource()
         booking = _make_booking()
         user_id = uuid.uuid4()
@@ -109,7 +127,7 @@ class TestBookingInvoiceService:
 
     def test_line_item_description_includes_resource_and_date(self):
         session = MagicMock()
-        service = BookingInvoiceService(session)
+        service = _service(session)
         resource = _make_resource(name="Meeting Room A")
         booking = _make_booking(start_at=datetime(2026, 4, 15, 14, 0))
         user_id = uuid.uuid4()

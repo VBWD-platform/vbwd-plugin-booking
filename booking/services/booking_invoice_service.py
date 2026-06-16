@@ -17,11 +17,14 @@ class BookingInvoiceService:
         Args:
             session: SQLAlchemy session.
             invoice_prefix: Invoice-number prefix.
-            price_factory: The core ``PriceFactory`` (D1). When provided, the
-                charged amount is the computed ``Price.brutto`` and the line item
-                records the netto + per-tax breakdown. When absent (legacy /
-                mock-based unit tests), the bare ``resource.price`` is charged
-                with no tax derivation.
+            price_factory: The core ``PriceFactory`` (D1). REQUIRED before any
+                invoice is built — the charged amount is the computed
+                ``Price.brutto`` and the line item records the netto + per-tax
+                breakdown. S96.2 removed the legacy ``None`` fallback that
+                silently recorded ``tax == 0`` (a Liskov violation for a taxed
+                resource); the charge path now raises if the factory is absent.
+                An untaxed resource still yields ``tax == 0`` / ``net == gross``
+                because the factory computes a tax-free ``Price``.
         """
         self.session = session
         self.invoice_prefix = invoice_prefix
@@ -30,48 +33,47 @@ class BookingInvoiceService:
     def _charge_for(self, resource, quantity):
         """Resolve (unit_price, line_total, price_breakdown, tax_fields).
 
-        S85.2 (D8): the charged unit price is ``Price.brutto`` when the factory
-        is wired. The invoice is an immutable financial record (Numeric(10,2)
-        columns), so the brutto float is quantized to cents here — the one
-        legitimate rounding boundary. S85.4: ``tax_fields`` carries the recorded
-        ``net_amount`` / ``tax_amount`` / ``tax_breakdown`` (per-rate, quantity-
-        scaled). When no factory is wired (legacy), the bare price is charged and
-        there is no tax derivation (the line defaults to net == gross).
-        """
-        if self._price_factory is not None:
-            from vbwd.pricing.line_tax_fields import line_tax_fields
+        S85.2 (D8): the charged unit price is ``Price.brutto``. The invoice is an
+        immutable financial record (Numeric(10,2) columns), so the brutto float
+        is quantized to cents here — the one legitimate rounding boundary. S85.4:
+        ``tax_fields`` carries the recorded ``net_amount`` / ``tax_amount`` /
+        ``tax_breakdown`` (per-rate, quantity-scaled).
 
-            computed_price = self._price_factory.get_price_from_object(resource)
-            unit_price = Decimal(str(computed_price.brutto)).quantize(
-                _CENTS, rounding=ROUND_HALF_UP
+        S96.2: the ``PriceFactory`` is required. There is no silent zero-tax
+        fallback — an absent factory raises so a taxed resource can never be
+        invoiced tax-free. An untaxed resource flows through the same path and
+        the factory simply computes a tax-free ``Price`` (net == gross).
+        """
+        if self._price_factory is None:
+            raise ValueError(
+                "BookingInvoiceService requires a PriceFactory to derive the "
+                "tax breakdown — refusing to invoice without one (S96.2: no "
+                "silent zero-tax fallback)."
             )
-            breakdown = computed_price.to_dict()
-            tax_fields = line_tax_fields(computed_price, quantity=quantity)
-        else:
-            unit_price = resource.price
-            breakdown = None
-            tax_fields = None
+
+        from vbwd.pricing.line_tax_fields import line_tax_fields
+
+        computed_price = self._price_factory.get_price_from_object(resource)
+        unit_price = Decimal(str(computed_price.brutto)).quantize(
+            _CENTS, rounding=ROUND_HALF_UP
+        )
+        breakdown = computed_price.to_dict()
+        tax_fields = line_tax_fields(computed_price, quantity=quantity)
         return unit_price, unit_price * quantity, breakdown, tax_fields
 
     @staticmethod
     def _apply_tax_fields(invoice, line_item, total_amount, tax_fields) -> None:
         """Set the per-line tax columns and roll the invoice net/tax/gross up.
 
-        Falls back to net == gross with zero tax when no breakdown is available
-        (legacy / taxless line), so subtotal + tax always equals the gross total.
+        ``tax_fields`` is always present (S96.2: the factory is required). An
+        untaxed resource yields ``tax_amount == 0`` and ``net_amount ==
+        total_amount`` so subtotal + tax always equals the gross total.
         """
-        if tax_fields is not None:
-            line_item.net_amount = tax_fields["net_amount"]
-            line_item.tax_amount = tax_fields["tax_amount"]
-            line_item.tax_breakdown = tax_fields["tax_breakdown"]
-            invoice.subtotal = tax_fields["net_amount"]
-            invoice.tax_amount = tax_fields["tax_amount"]
-        else:
-            line_item.net_amount = total_amount
-            line_item.tax_amount = Decimal("0.00")
-            line_item.tax_breakdown = []
-            invoice.subtotal = total_amount
-            invoice.tax_amount = Decimal("0.00")
+        line_item.net_amount = tax_fields["net_amount"]
+        line_item.tax_amount = tax_fields["tax_amount"]
+        line_item.tax_breakdown = tax_fields["tax_breakdown"]
+        invoice.subtotal = tax_fields["net_amount"]
+        invoice.tax_amount = tax_fields["tax_amount"]
         invoice.total_amount = total_amount
 
     def create_booking_invoice(self, user_id, resource, booking) -> UserInvoice:
@@ -114,10 +116,9 @@ class BookingInvoiceService:
             "end_at": booking.end_at.isoformat(),
             "custom_fields": booking.custom_fields or {},
         }
-        if breakdown is not None:
-            # S85.2: persist the per-line netto + per-tax breakdown from the
-            # Price VO (recorded tax split for the charged brutto).
-            line_item.extra_data["price_breakdown"] = breakdown
+        # S85.2: persist the per-line netto + per-tax breakdown from the Price
+        # VO (recorded tax split for the charged brutto).
+        line_item.extra_data["price_breakdown"] = breakdown
         # S85.4: set first-class per-rate tax columns + roll the invoice up.
         self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
@@ -186,10 +187,9 @@ class BookingInvoiceService:
             "custom_fields": custom_fields or {},
             "notes": notes,
         }
-        if breakdown is not None:
-            # S85.2: persist the per-line netto + per-tax breakdown from the
-            # Price VO (recorded tax split for the charged brutto).
-            line_item.extra_data["price_breakdown"] = breakdown
+        # S85.2: persist the per-line netto + per-tax breakdown from the Price
+        # VO (recorded tax split for the charged brutto).
+        line_item.extra_data["price_breakdown"] = breakdown
         # S85.4: set first-class per-rate tax columns + roll the invoice up.
         self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
