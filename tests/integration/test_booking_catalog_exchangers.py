@@ -138,6 +138,87 @@ class TestCategoryExchanger:
         )
         assert rebuilt_child.parent_id == rebuilt_parent.id
 
+    def test_hierarchy_import_order_independent_child_before_parent(self, db):
+        """A child row BEFORE its parent in the payload still resolves (the flaky bug).
+
+        The export row order is non-deterministic, so the import must topologically
+        order parents before children rather than relying on payload order.
+        """
+        exchanger = _exchanger(db.session, "booking_categories")
+        parent_row = {
+            "name": "Health",
+            "slug": "health",
+            "description": None,
+            "image_url": None,
+            "config": {},
+            "sort_order": 0,
+            "is_active": True,
+            "parent_slug": None,
+        }
+        child_row = {
+            "name": "Dentistry",
+            "slug": "dentistry",
+            "description": None,
+            "image_url": None,
+            "config": {},
+            "sort_order": 0,
+            "is_active": True,
+            "parent_slug": "health",
+        }
+        # Deliberately child FIRST — the broken order that triggered the flake.
+        payload = build_envelope(
+            "booking_categories", [child_row, parent_row], instance="test"
+        )
+
+        result = exchanger.import_(payload, mode="upsert", dry_run=False)
+        assert result.errors == []
+
+        rebuilt_parent = (
+            db.session.query(BookableResourceCategory).filter_by(slug="health").first()
+        )
+        rebuilt_child = (
+            db.session.query(BookableResourceCategory)
+            .filter_by(slug="dentistry")
+            .first()
+        )
+        assert rebuilt_parent is not None
+        assert rebuilt_child is not None
+        assert rebuilt_child.parent_id == rebuilt_parent.id
+
+    def test_three_level_hierarchy_import_shuffled(self, db):
+        """A grandparent→parent→child chain imports regardless of payload order."""
+        exchanger = _exchanger(db.session, "booking_categories")
+
+        def _row(slug, name, parent_slug):
+            return {
+                "name": name,
+                "slug": slug,
+                "description": None,
+                "image_url": None,
+                "config": {},
+                "sort_order": 0,
+                "is_active": True,
+                "parent_slug": parent_slug,
+            }
+
+        grandparent = _row("medical", "Medical", None)
+        parent = _row("dental", "Dental", "medical")
+        child = _row("orthodontics", "Orthodontics", "dental")
+        # Worst-case shuffle: deepest first, root last.
+        payload = build_envelope(
+            "booking_categories", [child, parent, grandparent], instance="test"
+        )
+
+        result = exchanger.import_(payload, mode="upsert", dry_run=False)
+        assert result.errors == []
+
+        rebuilt = {
+            category.slug: category
+            for category in db.session.query(BookableResourceCategory).all()
+        }
+        assert rebuilt["dental"].parent_id == rebuilt["medical"].id
+        assert rebuilt["orthodontics"].parent_id == rebuilt["dental"].id
+
     def test_unknown_parent_slug_records_error_without_crash(self, db):
         rows = [
             {

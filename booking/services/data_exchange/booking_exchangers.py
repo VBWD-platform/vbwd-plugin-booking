@@ -399,6 +399,19 @@ class _BookingCategoryExchanger(_PermissionMappedModelExchanger):
     subclass exports ``parent_slug`` instead of ``parent_id`` and resolves it on
     row-apply, skipping with an error row if the parent slug is unknown — never
     crashing the whole import (Liskov: the base import contract is preserved).
+
+    Order-independent import (flaky-bug fix): the export row order is
+    non-deterministic (neither the legacy ``find_all`` nor the S89 keyset/
+    ``iter_rows`` paths guarantee parents precede children, and a payload may
+    arrive in any order), so a child row can land before its parent. The base
+    per-row resolve would then error ``unknown parent_slug`` even though the
+    parent is in the same payload. :meth:`_apply_rows` is overridden to
+    **topologically sort** the rows (parents whose slug appears in the payload
+    are applied before their children, to any depth) before delegating to the
+    unchanged base apply loop. A row whose ``parent_slug`` is neither in the
+    payload nor already in the DB still errors via the base ``_import_row``
+    (the genuine-missing-parent contract + the Liskov "never crash the whole
+    import" guarantee are preserved).
     """
 
     def _serialise_row(self, row: Any, *, include_pii: bool) -> dict:
@@ -406,6 +419,57 @@ class _BookingCategoryExchanger(_PermissionMappedModelExchanger):
         parent = getattr(row, "parent", None)
         result["parent_slug"] = parent.slug if parent is not None else None
         return result
+
+    def _apply_rows(
+        self, rows: List[dict], *, mode: str, dry_run: bool
+    ) -> ImportResult:
+        ordered_rows = self._order_rows_parents_first(rows)
+        return super()._apply_rows(ordered_rows, mode=mode, dry_run=dry_run)
+
+    def _order_rows_parents_first(self, rows: List[dict]) -> List[dict]:
+        """Return ``rows`` reordered so any parent in the payload precedes its child.
+
+        Topological sort over the self-referential ``slug``→``parent_slug`` edge:
+        a row is "ready" when it has no ``parent_slug``, or its ``parent_slug`` is
+        NOT another row in this payload (a pre-existing parent already in the DB —
+        let the base resolve it), or its parent row has already been placed. Rows
+        whose parent never resolves within the payload (a genuine forward-only
+        reference, or a cycle) are appended at the end unchanged so the base
+        ``_import_row`` still records the proper error — the contract is
+        order-independent, not error-suppressing.
+        """
+        slugs_in_payload = {
+            row.get(self.natural_key) for row in rows if row.get(self.natural_key)
+        }
+        placed_slugs: Set[Any] = set()
+        ordered: List[dict] = []
+        remaining = list(rows)
+        while remaining:
+            progressed = False
+            still_waiting: List[dict] = []
+            for row in remaining:
+                parent_slug = row.get("parent_slug")
+                parent_in_payload = parent_slug in slugs_in_payload
+                if (
+                    not parent_slug
+                    or not parent_in_payload
+                    or parent_slug in placed_slugs
+                ):
+                    ordered.append(row)
+                    own_slug = row.get(self.natural_key)
+                    if own_slug:
+                        placed_slugs.add(own_slug)
+                    progressed = True
+                else:
+                    still_waiting.append(row)
+            if not progressed:
+                # No row became ready this pass: the rest form a cycle or a
+                # forward-only chain whose parent is absent. Append them as-is so
+                # the base apply loop records the genuine error per row.
+                ordered.extend(still_waiting)
+                break
+            remaining = still_waiting
+        return ordered
 
     def _import_row(
         self, row: dict, index: int, result: ImportResult, *, dry_run: bool
