@@ -216,7 +216,11 @@ class _BookingsExchanger(_PermissionMappedModelExchanger):
     * load-test rows are identified by their FK to the one ``loadtest-``
       resource (a queryable marker the model already has — no new column), so
       ``_existing_loadtest_keys`` / ``_reset_loadtest_rows`` scope to exactly
-      those reservations and never touch real bookings.
+      those reservations and never touch real bookings. ``--reset`` drops the
+      reservations but **keeps** that shared resource (a deterministic fixture,
+      not load data) so an exported row's ``resource_id`` FK still resolves on a
+      cold re-import (S89.1: dropping it broke the round-trip with a FK
+      violation).
 
     Liskov: the base ``bulk_seed`` contract (idempotent, batched, reset-clean)
     is preserved — only how a load-test row is built + identified changes.
@@ -291,11 +295,16 @@ class _BookingsExchanger(_PermissionMappedModelExchanger):
         return {str(row[0]) for row in rows}
 
     def _reset_loadtest_rows(self) -> int:
-        """Drop the load-test reservations, then the resource if now unreferenced.
+        """Drop the load-test reservations, KEEPING the shared resource.
 
         Scoped to the one shared ``loadtest-`` resource so a real booking + real
-        resource are never touched. The cached resource is cleared so the next
-        seed re-creates it cleanly.
+        resource are never touched. The resource itself is a stable, deterministic
+        fixture (fixed slug), not load data: it is **kept** across a reset so the
+        ``resource_id`` FK carried in an exported ``bookings`` row still resolves
+        on a subsequent cold import (export → reset → import round-trip). Dropping
+        it broke that round-trip with a ``ForeignKeyViolation`` (S89.1, CI run
+        27576135604). The cached handle is refreshed (not cleared) so a following
+        seed reuses the surviving resource rather than re-creating it.
         """
         from plugins.booking.booking.models.booking import Booking
 
@@ -308,8 +317,7 @@ class _BookingsExchanger(_PermissionMappedModelExchanger):
             .filter(Booking.resource_id == resource.id)
             .delete(synchronize_session=False)
         )
-        self._drop_seed_resource_if_unreferenced(resource.id)
-        self._seed_resource = None
+        self._seed_resource = resource
         return deleted
 
     # ── prerequisites ──────────────────────────────────────────────────────
@@ -380,24 +388,6 @@ class _BookingsExchanger(_PermissionMappedModelExchanger):
             )
         self._seed_user_id = user_id
         return user_id
-
-    def _drop_seed_resource_if_unreferenced(self, resource_id: Any) -> None:
-        from plugins.booking.booking.models.booking import Booking
-        from plugins.booking.booking.models.resource import BookableResource
-
-        # Query the DB for any remaining reservation on the resource rather than a
-        # (possibly stale) relationship: the delete above ran with
-        # ``synchronize_session=False``.
-        still_referenced = (
-            self._session.query(Booking.id)
-            .filter(Booking.resource_id == resource_id)
-            .first()
-        )
-        if still_referenced is not None:
-            return
-        resource = self._session.get(BookableResource, resource_id)
-        if resource is not None:
-            self._session.delete(resource)
 
 
 class _BookingCategoryExchanger(_PermissionMappedModelExchanger):

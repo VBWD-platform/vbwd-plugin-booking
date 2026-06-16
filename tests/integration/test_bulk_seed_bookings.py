@@ -173,7 +173,19 @@ class TestBulkSeedBookings:
             is not None
         )
 
-    def test_reset_drops_resource_when_no_rows_seeded_after(self, db):
+    def test_reset_keeps_shared_resource_for_cold_reimport(self, db):
+        """``--reset`` drops the reservations but KEEPS the shared resource.
+
+        S89.1 load-test bug (CI run 27576135604): the harness runs a *cold*
+        import by ``bulk-seed bookings --count 0 --reset`` (empties the table)
+        then importing the exported NDJSON. The exported rows carry the shared
+        resource's UUID in ``resource_id``; if ``--reset`` also dropped that
+        resource, the cold insert hit a ``ForeignKeyViolation`` and the CLI
+        exited non-zero (``outcome=error``). The shared ``loadtest-`` resource is
+        a stable, deterministic fixture (fixed slug), not load data — keeping it
+        across a reset is what makes the same-instance export→reset→import
+        round-trip valid (the documented guarantee).
+        """
         exchanger = _bookings_exchanger(db.session)
         exchanger.bulk_seed(10)
         db.session.commit()
@@ -186,5 +198,41 @@ class TestBulkSeedBookings:
         assert result.deleted == 10
         assert result.created == 0
         assert _loadtest_bookings(db.session) == []
-        # No reservation references the load-test resource ⇒ it is dropped.
-        assert _seed_resource(db.session) is None
+        # The shared resource survives so a cold re-import's resource_id FK
+        # still resolves.
+        assert _seed_resource(db.session) is not None
+
+    def test_cold_reimport_after_reset_round_trips(self, db):
+        """Reproduce the CI cold path: seed → export → reset → import (created).
+
+        After ``--reset`` empties the reservations, importing the exported rows
+        must re-insert them cleanly (the ``resource_id`` FK still resolves to the
+        surviving shared resource) rather than raising a FK violation.
+        """
+        exchanger = _bookings_exchanger(db.session)
+        exchanger.bulk_seed(10)
+        db.session.commit()
+
+        resource_id = _seed_resource(db.session).id
+        exported = exchanger.export(ExportSelector(ids=None), include_pii=True).rows
+        loadtest_rows = [
+            row for row in exported if str(row["resource_id"]) == str(resource_id)
+        ]
+        assert len(loadtest_rows) == 10
+
+        # The harness's "cold" reset between cells: count 0 + reset.
+        exchanger = _bookings_exchanger(db.session)
+        exchanger.bulk_seed(0, reset=True)
+        db.session.commit()
+        assert _loadtest_bookings(db.session) == []
+
+        # Cold import re-creates every reservation against the surviving FK.
+        exchanger = _bookings_exchanger(db.session)
+        payload = build_envelope("bookings", loadtest_rows, instance="test")
+        result = exchanger.import_(payload, mode="upsert", dry_run=False)
+
+        assert result.errors == []
+        assert result.created == 10
+        rebuilt = _loadtest_bookings(db.session)
+        assert len(rebuilt) == 10
+        assert all(str(booking.resource_id) == str(resource_id) for booking in rebuilt)

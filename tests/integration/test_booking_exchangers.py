@@ -17,7 +17,7 @@ DRY; Liskov; no overengineering. Quality guard: ``bin/pre-commit-check.sh
 import uuid
 from datetime import datetime, timedelta
 
-from vbwd.services.data_exchange.envelope import build_envelope
+from vbwd.services.data_exchange.envelope import build_envelope, iter_ndjson_lines
 from vbwd.services.data_exchange.port import CLUSTER_SALES, ExportSelector
 from plugins.booking.booking.models.booking import Booking
 from plugins.booking.booking.models.resource import BookableResource
@@ -80,6 +80,57 @@ class TestBookingsRoundTrip:
         assert rebuilt is not None
         assert rebuilt.quantity == 2
         assert rebuilt.status == "confirmed"
+
+    def test_ndjson_round_trip_by_id(self, db):
+        """The real CLI path: export → NDJSON text → import_ndjson back.
+
+        S89.1 load-test bug: a ``bookings`` NDJSON export re-imports with
+        ``outcome=error``. Unlike :meth:`test_round_trip_by_id` (which feeds the
+        in-memory Python rows straight back, keeping ``datetime``/UUID objects),
+        the CLI serialises every row through ``json.dumps`` — so ``start_at`` /
+        ``end_at`` arrive as ISO strings and the id/FKs as UUID strings. The
+        import must deserialise those back into the model's typed columns; a raw
+        string into a ``db.DateTime`` column breaks the flush.
+        """
+        booking = _seed_booking(db)
+        booking_id = booking.id
+        exchanger = _exchanger(db.session)
+
+        # Serialise exactly as the CLI does: chunked iter_export → NDJSON lines.
+        chunks = exchanger.iter_export(
+            ExportSelector(ids=[str(booking_id)]),
+            chunk_size=5000,
+            include_pii=True,
+        )
+        ndjson_text = "".join(iter_ndjson_lines("bookings", chunks, instance="test"))
+
+        db.session.query(Booking).filter(Booking.id == booking_id).delete()
+        db.session.commit()
+        assert db.session.get(Booking, booking_id) is None
+
+        result = exchanger.import_ndjson(
+            ndjson_text.splitlines(keepends=True), mode="upsert", dry_run=False
+        )
+        assert result.errors == []
+        assert result.created == 1
+
+        rebuilt = db.session.get(Booking, booking_id)
+        assert rebuilt is not None
+        assert rebuilt.quantity == 2
+        assert rebuilt.status == "confirmed"
+        assert rebuilt.start_at == datetime(2026, 7, 1, 10, 0, 0)
+        assert rebuilt.end_at == datetime(2026, 7, 1, 11, 0, 0)
+        assert str(rebuilt.resource_id) == str(booking.resource_id)
+        assert str(rebuilt.user_id) == str(booking.user_id)
+
+        # Re-import the same NDJSON → idempotent upsert (updates, no new row).
+        second = exchanger.import_ndjson(
+            ndjson_text.splitlines(keepends=True), mode="upsert", dry_run=False
+        )
+        assert second.errors == []
+        assert second.updated == 1
+        assert second.created == 0
+        assert db.session.query(Booking).filter(Booking.id == booking_id).count() == 1
 
     def test_export_redacts_pii_without_permission(self, db):
         booking = _seed_booking(db, notes="sensitive")
