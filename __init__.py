@@ -128,6 +128,16 @@ class BookingPlugin(BasePlugin):
 
         register_catalog_seeder(seed_catalog)
 
+        # Cross-entity search seam — contribute bookable resources to the
+        # agnostic search registry so the /search bot can find them (idempotent:
+        # register replaces by entity_type). Core names no booking vocabulary.
+        from vbwd.services.search import search_provider_registry
+        from plugins.booking.booking.search_provider import (
+            BookingResourceSearchProvider,
+        )
+
+        search_provider_registry.register(BookingResourceSearchProvider())
+
         # S09 — register the plugin's repositories with the DI container so
         # the payment handler / completion service / consumers can resolve
         # them via `current_app.container.booking_<name>_repository()`
@@ -207,6 +217,10 @@ class BookingPlugin(BasePlugin):
         from vbwd.services.entity_type_registry import unregister_entity_type
 
         unregister_entity_type("booking_resource")
+
+        from vbwd.services.search import search_provider_registry
+
+        search_provider_registry.unregister("booking_resource")
 
     def register_event_handlers(self, event_bus):
         import logging
