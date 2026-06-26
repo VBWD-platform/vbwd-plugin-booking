@@ -412,8 +412,8 @@ def _populate_cms_content(session):
         from plugins.cms.src.models.cms_layout import CmsLayout
         from plugins.cms.src.models.cms_widget import CmsWidget
         from plugins.cms.src.models.cms_layout_widget import CmsLayoutWidget
-        from plugins.cms.src.models.cms_page import CmsPage
-        from plugins.cms.src.models.cms_category import CmsCategory
+        from plugins.cms.src.models.cms_post import CmsPost
+        from plugins.cms.src.models.cms_term import CmsTerm
     except ImportError:
         logger.info("[booking] CMS plugin not installed — skipping CMS setup")
         return
@@ -444,7 +444,9 @@ def _populate_cms_content(session):
             )
             session.flush()
 
-    cms_cat, _ = _get_or_create(CmsCategory, "booking", name="Booking", sort_order=60)
+    cms_cat, _ = _get_or_create(
+        CmsTerm, "booking", term_type="category", name="Booking", sort_order=60
+    )
 
     CATALOGUE_LAYOUT_SLUG = "booking-catalogue"
     DETAIL_LAYOUT_SLUG = "booking-resource-detail"
@@ -620,19 +622,19 @@ def _populate_cms_content(session):
     ]
     for slug, name, layout_slug, sort, meta_title, meta_desc, robots in page_specs:
         kwargs = dict(
-            name=name,
+            type="page",
+            title=name,
             language="en",
             content_json={"type": "doc", "content": []},
-            is_published=True,
+            status="published",
             sort_order=sort,
-            category_id=cms_cat.id,
             layout_id=layouts[layout_slug].id,
             meta_title=meta_title,
             robots=robots,
         )
         if meta_desc is not None:
             kwargs["meta_description"] = meta_desc
-        _get_or_create(CmsPage, slug, **kwargs)
+        _get_or_create(CmsPost, slug, **kwargs)
 
     if header_nav:
         try:
