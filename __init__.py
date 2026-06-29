@@ -21,7 +21,7 @@ class BookingPlugin(BasePlugin):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
             name="booking",
-            version="26.6",
+            version="26.6.1",
             author="VBWD",
             description="Booking plugin — appointments, rooms, spaces, seats",
             dependencies=["email"],
