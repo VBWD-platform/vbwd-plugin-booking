@@ -53,5 +53,10 @@
     "type": "string",
     "default": "manual",
     "description": "Payment capture mode: auto (charge immediately) or manual (authorize only, charge later)"
+  },
+  "marketplace_enabled": {
+    "type": "boolean",
+    "default": false,
+    "description": "Enable vendor-mode: self-service vendor resource routes + stamp the owning vendor id on the buyer invoice line so the marketplace plugin credits the vendor"
   }
 }

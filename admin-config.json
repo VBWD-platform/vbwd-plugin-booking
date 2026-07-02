@@ -44,6 +44,12 @@
             { "value": "auto", "label": "Auto (charge immediately)" }
           ],
           "description": "Manual: holds funds on card, admin charges later. Auto: charges immediately on checkout."
+        },
+        {
+          "key": "marketplace_enabled",
+          "label": "Enable Vendor Mode (Marketplace)",
+          "component": "checkbox",
+          "description": "Allow vendors to own bookable resources and stamp the vendor id on the buyer invoice line so the marketplace plugin credits the vendor. Off = classic single-owner booking."
         }
       ]
     },

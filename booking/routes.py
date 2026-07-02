@@ -5,7 +5,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from flask import Blueprint, Response, current_app, jsonify, request, g
 
 from vbwd.extensions import db
-from vbwd.middleware.auth import require_auth, require_admin, require_permission
+from vbwd.middleware.auth import (
+    require_auth,
+    require_admin,
+    require_permission,
+    require_user_permission,
+)
 
 from plugins.booking.booking.repositories.resource_category_repository import (
     ResourceCategoryRepository,
@@ -32,6 +37,7 @@ from plugins.booking.booking.services.booking_invoice_service import (
 from plugins.booking.booking.services.resource_pricing_service import (
     ResourcePricingService,
 )
+from plugins.booking.booking.services.plugin_config import marketplace_enabled
 from vbwd.models.tax import Tax
 
 booking_bp = Blueprint("booking", __name__)
@@ -1088,6 +1094,159 @@ def admin_get_resource(resource_id):
     if not resource:
         return jsonify({"error": "Resource not found"}), 404
     return jsonify(resource.to_dict())
+
+
+# ── Vendor: Self-service (marketplace vendor-mode) ───────────────────
+#
+# Gated behind the ``marketplace_enabled`` config flag AND the user-facing
+# ``marketplace.vendor`` permission. A vendor owns the resources they create
+# (``vendor_id`` = their user id). When vendor-mode is off this route returns
+# 403 (classic single-owner booking). The permission is the central marketplace
+# plugin's convention; booking never imports marketplace.
+
+
+def _require_marketplace_enabled():
+    """Return a 403 response tuple when vendor-mode is off, else ``None``."""
+    if not marketplace_enabled():
+        return jsonify({"error": "Vendor mode is not enabled"}), 403
+    return None
+
+
+def _slugify_resource_name(name: str) -> str:
+    """Derive a URL-safe slug from ``name`` with a short unique suffix.
+
+    Used only when a vendor omits ``slug``; the suffix keeps the (unique) slug
+    column collision-free without a lookup loop.
+    """
+    import re
+    from uuid import uuid4
+
+    base = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    base = base or "resource"
+    return f"{base}-{uuid4().hex[:8]}"
+
+
+@booking_bp.route("/api/v1/booking/vendor/resources", methods=["POST"])
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_create_resource():
+    """Vendor self-service: create a bookable resource the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    data = request.get_json() or {}
+    if not data.get("name"):
+        return jsonify({"error": "name is required"}), 400
+    if data.get("price") is None:
+        return jsonify({"error": "price is required"}), 400
+
+    from plugins.booking.booking.models.resource import BookableResource
+
+    resource = BookableResource()
+    resource.name = data["name"]
+    resource.slug = data.get("slug") or _slugify_resource_name(data["name"])
+    resource.description = data.get("description")
+    resource.price = float(data["price"])
+    resource.capacity = data.get("capacity", 1)
+    resource.price_unit = data.get("price_unit", "per_slot")
+    resource.availability = {}
+    resource.is_active = True
+    resource.vendor_id = g.user_id
+
+    _resource_repo().save(resource)
+    db.session.commit()
+    return jsonify({"resource": resource.to_dict()}), 201
+
+
+def _load_owned_resource(resource_id):
+    """Return ``(resource, None)`` when the caller owns it.
+
+    Returns ``(None, error_response)`` with a 404 when the resource is missing
+    or a 403 when it exists but belongs to another vendor.
+    """
+    resource = _resource_repo().find_by_id(resource_id)
+    if not resource:
+        return None, (jsonify({"error": "Resource not found"}), 404)
+    if str(resource.vendor_id) != str(g.user_id):
+        return None, (jsonify({"error": "You do not own this resource"}), 403)
+    return resource, None
+
+
+@booking_bp.route("/api/v1/booking/vendor/resources", methods=["GET"])
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_list_resources():
+    """Vendor self-service: list only the resources the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    resources = _resource_repo().find_by_vendor_id(g.user_id)
+    return jsonify({"resources": [resource.to_dict() for resource in resources]})
+
+
+@booking_bp.route("/api/v1/booking/vendor/resources/<resource_id>", methods=["GET"])
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_get_resource(resource_id):
+    """Vendor self-service: fetch one resource the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+    return jsonify({"resource": resource.to_dict()})
+
+
+@booking_bp.route("/api/v1/booking/vendor/resources/<resource_id>", methods=["PUT"])
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_update_resource(resource_id):
+    """Vendor self-service: update editable fields of an owned resource."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+    editable_fields = [
+        "name",
+        "slug",
+        "description",
+        "price",
+        "capacity",
+        "is_active",
+    ]
+    for field in editable_fields:
+        if field in data:
+            setattr(resource, field, data[field])
+
+    db.session.commit()
+    return jsonify({"resource": resource.to_dict()})
+
+
+@booking_bp.route("/api/v1/booking/vendor/resources/<resource_id>", methods=["DELETE"])
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_delete_resource(resource_id):
+    """Vendor self-service: delete an owned resource."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    _resource_repo().delete(resource)
+    db.session.commit()
+    return jsonify({"success": True})
 
 
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["POST"])

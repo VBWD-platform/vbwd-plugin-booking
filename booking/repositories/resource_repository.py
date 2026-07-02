@@ -15,6 +15,14 @@ class ResourceRepository:
     def find_by_id(self, resource_id):
         return self.session.get(BookableResource, resource_id)
 
+    def find_by_vendor_id(self, vendor_id):
+        return (
+            self.session.query(BookableResource)
+            .filter_by(vendor_id=vendor_id)
+            .order_by(BookableResource.sort_order)
+            .all()
+        )
+
     def find_by_slug(self, slug):
         return self.session.query(BookableResource).filter_by(slug=slug).first()
 

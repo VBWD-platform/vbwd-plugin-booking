@@ -1,4 +1,4 @@
-from vbwd.plugins.base import BasePlugin, PluginMetadata
+from vbwd.plugins.base import BasePlugin, PluginMetadata, PublicRouteDeclaration
 
 
 DEFAULT_CONFIG = {
@@ -13,6 +13,10 @@ DEFAULT_CONFIG = {
     "enable_recurring_bookings": False,
     "max_bookings_per_user_per_day": 5,
     "capture_mode": "manual",
+    # Vendor-mode (marketplace): gates the self-service vendor routes AND the
+    # checkout vendor-id stamp. Default OFF so a classic single-owner install
+    # behaves exactly as before.
+    "marketplace_enabled": False,
 }
 
 
@@ -32,6 +36,19 @@ class BookingPlugin(BasePlugin):
         if config:
             merged.update(config)
         super().initialize(merged)
+
+    def declare_public_routes(self) -> PublicRouteDeclaration:
+        """Public booking storefront reads (categories, resources, availability)."""
+        return PublicRouteDeclaration(
+            read={
+                "/api/v1/booking/categories": "Public booking category listing for the storefront.",
+                "/api/v1/booking/config": "Public booking widget config for the storefront.",
+                "/api/v1/booking/resources": "Public bookable-resource listing for the storefront.",
+                "/api/v1/booking/resources/<slug>": "Public single bookable resource for the storefront.",
+                "/api/v1/booking/resources/<slug>/availability": "Public availability lookup for booking UI.",
+                "/api/v1/booking/schemas": "Public booking form schemas for the storefront.",
+            },
+        )
 
     def get_blueprint(self):
         from plugins.booking.booking.routes import booking_bp

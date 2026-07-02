@@ -7,6 +7,9 @@ from vbwd.models.enums import InvoiceStatus, LineItemType
 from vbwd.models.invoice import UserInvoice
 from vbwd.models.invoice_line_item import InvoiceLineItem
 
+from plugins.booking.booking.constants import VENDOR_ID_KEY
+from plugins.booking.booking.services.plugin_config import marketplace_enabled
+
 _CENTS = Decimal("0.01")
 
 
@@ -60,6 +63,23 @@ class BookingInvoiceService:
         breakdown = computed_price.to_dict()
         tax_fields = line_tax_fields(computed_price, quantity=quantity)
         return unit_price, unit_price * quantity, breakdown, tax_fields
+
+    @staticmethod
+    def _maybe_stamp_vendor(line_item, resource) -> None:
+        """Copy the resource's vendor id onto the line's ``extra_data`` (money path).
+
+        When vendor-mode is on and the resource is vendor-owned, stamp
+        ``extra_data["vendor_id"]`` with the vendor's user id — the documented
+        convention the central ``marketplace`` plugin credits from. Never
+        clobbers existing keys and adds nothing for a platform-owned resource
+        (``vendor_id is None``) or when vendor-mode is off. Booking never imports
+        marketplace — the money path is a decoupled literal stamp.
+        """
+        if not marketplace_enabled():
+            return
+        vendor_id = getattr(resource, "vendor_id", None)
+        if vendor_id is not None:
+            line_item.extra_data[VENDOR_ID_KEY] = str(vendor_id)
 
     @staticmethod
     def _apply_tax_fields(invoice, line_item, total_amount, tax_fields) -> None:
@@ -119,6 +139,8 @@ class BookingInvoiceService:
         # S85.2: persist the per-line netto + per-tax breakdown from the Price
         # VO (recorded tax split for the charged brutto).
         line_item.extra_data["price_breakdown"] = breakdown
+        # Vendor-mode: stamp the owning vendor id so marketplace credits it.
+        self._maybe_stamp_vendor(line_item, resource)
         # S85.4: set first-class per-rate tax columns + roll the invoice up.
         self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
@@ -190,6 +212,8 @@ class BookingInvoiceService:
         # S85.2: persist the per-line netto + per-tax breakdown from the Price
         # VO (recorded tax split for the charged brutto).
         line_item.extra_data["price_breakdown"] = breakdown
+        # Vendor-mode: stamp the owning vendor id so marketplace credits it.
+        self._maybe_stamp_vendor(line_item, resource)
         # S85.4: set first-class per-rate tax columns + roll the invoice up.
         self._apply_tax_fields(invoice, line_item, total_amount, tax_fields)
         self.session.add(line_item)
