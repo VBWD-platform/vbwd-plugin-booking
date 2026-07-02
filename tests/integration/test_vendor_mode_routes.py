@@ -126,6 +126,136 @@ def _create_resource(client, token, name="Vendor Room"):
     return resp.get_json()["resource"]
 
 
+def _create_custom_schema(db, slug_prefix="vendor-schema"):
+    from plugins.booking.booking.models.custom_schema import BookingCustomSchema
+
+    schema = BookingCustomSchema(
+        name="Vendor Schema",
+        slug=f"{slug_prefix}-{uuid4().hex[:8]}",
+        fields=[{"id": "note", "label": "Note", "type": "text", "required": False}],
+    )
+    db.session.add(schema)
+    db.session.commit()
+    return schema
+
+
+# ── CONTENT FIELD ROUND-TRIP (fe-admin ResourceForm parity) ─────────
+
+
+def test_vendor_create_round_trips_content_fields(client, db, monkeypatch):
+    user, token = _make_vendor(client, db, f"v-fields-{uuid4().hex[:6]}@example.com")
+    _enable_marketplace(monkeypatch, True)
+    schema = _create_custom_schema(db)
+
+    resp = client.post(
+        VENDOR_RESOURCES_PATH,
+        json={
+            "name": "Rich Room",
+            "price": 40.0,
+            "capacity": 4,
+            "slot_duration_minutes": 90,
+            "price_unit": "per_hour",
+            "price_display_mode": "brutto",
+            "custom_schema_id": str(schema.id),
+            "sort_order": 7,
+            "description": "A well-appointed room.",
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, resp.get_json()
+    resource = resp.get_json()["resource"]
+    assert resource["vendor_id"] == str(user.id)
+    assert resource["capacity"] == 4
+    assert resource["slot_duration_minutes"] == 90
+    assert resource["price_unit"] == "per_hour"
+    assert resource["price_display_mode"] == "brutto"
+    assert resource["custom_schema_id"] == str(schema.id)
+    assert resource["sort_order"] == 7
+    assert resource["description"] == "A well-appointed room."
+
+
+def test_vendor_update_round_trips_content_fields(client, db, monkeypatch):
+    _user, token = _make_vendor(
+        client, db, f"v-fields-upd-{uuid4().hex[:6]}@example.com"
+    )
+    _enable_marketplace(monkeypatch, True)
+    schema = _create_custom_schema(db)
+    created = _create_resource(client, token, "Plain Room")
+
+    resp = client.put(
+        f"{VENDOR_RESOURCES_PATH}/{created['id']}",
+        json={
+            "slot_duration_minutes": 45,
+            "price_unit": "per_night",
+            "price_display_mode": "netto",
+            "custom_schema_id": str(schema.id),
+            "sort_order": 3,
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.get_json()
+    resource = resp.get_json()["resource"]
+    assert resource["slot_duration_minutes"] == 45
+    assert resource["price_unit"] == "per_night"
+    assert resource["price_display_mode"] == "netto"
+    assert resource["custom_schema_id"] == str(schema.id)
+    assert resource["sort_order"] == 3
+
+
+def test_vendor_create_invalid_price_display_mode_returns_400(client, db, monkeypatch):
+    _user, token = _make_vendor(client, db, f"v-badmode-{uuid4().hex[:6]}@example.com")
+    _enable_marketplace(monkeypatch, True)
+
+    resp = client.post(
+        VENDOR_RESOURCES_PATH,
+        json={"name": "Bad Mode", "price": 10.0, "price_display_mode": "sideways"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 400, resp.get_json()
+
+
+def test_vendor_create_invalid_price_unit_returns_400(client, db, monkeypatch):
+    _user, token = _make_vendor(client, db, f"v-badunit-{uuid4().hex[:6]}@example.com")
+    _enable_marketplace(monkeypatch, True)
+
+    resp = client.post(
+        VENDOR_RESOURCES_PATH,
+        json={"name": "Bad Unit", "price": 10.0, "price_unit": "per_decade"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 400, resp.get_json()
+
+
+def test_vendor_update_invalid_price_display_mode_returns_400(client, db, monkeypatch):
+    _user, token = _make_vendor(
+        client, db, f"v-badmode-upd-{uuid4().hex[:6]}@example.com"
+    )
+    _enable_marketplace(monkeypatch, True)
+    created = _create_resource(client, token, "Room")
+
+    resp = client.put(
+        f"{VENDOR_RESOURCES_PATH}/{created['id']}",
+        json={"price_display_mode": "sideways"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 400, resp.get_json()
+
+
+def test_vendor_update_invalid_price_unit_returns_400(client, db, monkeypatch):
+    _user, token = _make_vendor(
+        client, db, f"v-badunit-upd-{uuid4().hex[:6]}@example.com"
+    )
+    _enable_marketplace(monkeypatch, True)
+    created = _create_resource(client, token, "Room")
+
+    resp = client.put(
+        f"{VENDOR_RESOURCES_PATH}/{created['id']}",
+        json={"price_unit": "per_decade"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 400, resp.get_json()
+
+
 # ── READ: list ──────────────────────────────────────────────────────
 
 

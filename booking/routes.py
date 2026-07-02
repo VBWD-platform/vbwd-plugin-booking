@@ -1126,6 +1126,60 @@ def _slugify_resource_name(name: str) -> str:
     return f"{base}-{uuid4().hex[:8]}"
 
 
+# Vendor-editable content fields copied verbatim onto the resource. Mirrors the
+# fe-admin ResourceForm whitelist minus privileged/ownership fields (vendor_id,
+# id) and admin-catalog relations (taxes, categories). ``price``,
+# ``price_unit`` and ``price_display_mode`` are handled explicitly in
+# ``_apply_vendor_resource_fields`` because they need coercion/validation.
+VENDOR_RESOURCE_CONTENT_FIELDS = (
+    "name",
+    "slug",
+    "description",
+    "custom_schema_id",
+    "capacity",
+    "slot_duration_minutes",
+    "sort_order",
+    "is_active",
+)
+
+
+def _apply_vendor_resource_fields(resource, data):
+    """Copy the vendor-editable content fields from ``data`` onto ``resource``.
+
+    Applies the same whitelist and validation the fe-admin ResourceForm relies
+    on so a vendor can set every field the admin form exposes. Returns ``None``
+    on success, or a ``(response, status)`` tuple to propagate a 400 when a
+    ``price_unit`` / ``price_display_mode`` value is rejected.
+    """
+    from plugins.booking.booking.models.resource import (
+        validate_price_display_mode,
+        validate_price_unit,
+    )
+
+    if "price_unit" in data:
+        try:
+            resource.price_unit = validate_price_unit(data["price_unit"])
+        except ValueError as unit_error:
+            return jsonify({"error": str(unit_error)}), 400
+
+    if "price_display_mode" in data:
+        try:
+            resource.price_display_mode = validate_price_display_mode(
+                data["price_display_mode"]
+            )
+        except ValueError as mode_error:
+            return jsonify({"error": str(mode_error)}), 400
+
+    if data.get("price") is not None:
+        resource.price = float(data["price"])
+
+    for field in VENDOR_RESOURCE_CONTENT_FIELDS:
+        if field in data:
+            setattr(resource, field, data[field])
+
+    return None
+
+
 @booking_bp.route("/api/v1/booking/vendor/resources", methods=["POST"])
 @require_auth
 @require_user_permission("marketplace.vendor")
@@ -1144,15 +1198,15 @@ def vendor_create_resource():
     from plugins.booking.booking.models.resource import BookableResource
 
     resource = BookableResource()
-    resource.name = data["name"]
-    resource.slug = data.get("slug") or _slugify_resource_name(data["name"])
-    resource.description = data.get("description")
-    resource.price = float(data["price"])
-    resource.capacity = data.get("capacity", 1)
-    resource.price_unit = data.get("price_unit", "per_slot")
     resource.availability = {}
     resource.is_active = True
     resource.vendor_id = g.user_id
+
+    error = _apply_vendor_resource_fields(resource, data)
+    if error:
+        return error
+
+    resource.slug = resource.slug or _slugify_resource_name(data["name"])
 
     _resource_repo().save(resource)
     db.session.commit()
@@ -1215,17 +1269,9 @@ def vendor_update_resource(resource_id):
         return error
 
     data = request.get_json() or {}
-    editable_fields = [
-        "name",
-        "slug",
-        "description",
-        "price",
-        "capacity",
-        "is_active",
-    ]
-    for field in editable_fields:
-        if field in data:
-            setattr(resource, field, data[field])
+    apply_error = _apply_vendor_resource_fields(resource, data)
+    if apply_error:
+        return apply_error
 
     db.session.commit()
     return jsonify({"resource": resource.to_dict()})
@@ -1247,6 +1293,214 @@ def vendor_delete_resource(resource_id):
     _resource_repo().delete(resource)
     db.session.commit()
     return jsonify({"success": True})
+
+
+# ── Vendor: resource images (generic gallery shape) ──────────────────
+#
+# Same CMS storage chain + ownership rules as the vendor resource CRUD. The
+# JSON is normalised to EXACTLY ``{id, url, alt, sort_order, is_primary}`` so
+# the fe-user gallery is generic across shop + booking. Bookable resources have
+# no stock, so there is no vendor stock surface here.
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/images", methods=["GET"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_list_resource_images(resource_id):
+    """Vendor self-service: images for a resource the caller owns (else 403)."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    images = _resource_image_query(resource_id).all()
+    return jsonify({"images": [_normalize_resource_image(img) for img in images]})
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/images", methods=["POST"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_upload_resource_image(resource_id):
+    """Vendor self-service: upload an image for a resource the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    resource_image, upload_error = _upload_resource_image(resource_id)
+    if upload_error:
+        return upload_error
+    return jsonify({"image": _normalize_resource_image(resource_image)}), 201
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/images/<image_id>/primary",
+    methods=["POST"],
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_set_resource_image_primary(resource_id, image_id):
+    """Vendor self-service: set the primary image for an owned resource."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    target, primary_error = _set_resource_image_primary(resource_id, image_id)
+    if primary_error:
+        return primary_error
+    return jsonify({"image": _normalize_resource_image(target)})
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/images/<image_id>",
+    methods=["DELETE"],
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_delete_resource_image(resource_id, image_id):
+    """Vendor self-service: delete an image for a resource the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    delete_error = _delete_resource_image(resource_id, image_id)
+    if delete_error:
+        return delete_error
+    return jsonify({"message": "Image deleted"})
+
+
+# ── Vendor: resource tags & custom fields (booking_resource) ─────────
+#
+# Routed through the core ``tags_and_custom_fields()`` by-id port so vendor +
+# admin never diverge; ``booking_resource`` is registered in the plugin's
+# ``on_enable`` (register_entity_type). Booking never names tag vocabulary.
+
+
+def _vendor_tags_and_custom_fields():
+    """The core generic tags / custom-fields by-id port."""
+    return current_app.container.tags_and_custom_fields()
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/tags", methods=["GET"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_get_resource_tags(resource_id):
+    """Vendor self-service: tag slugs on a resource the caller owns (else 403)."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    port = _vendor_tags_and_custom_fields()
+    return jsonify({"tags": port.get_tags("booking_resource", resource_id)})
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/tags", methods=["PUT"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_set_resource_tags(resource_id):
+    """Vendor self-service: replace the full tag set (unknown slugs auto-create)."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+    slugs = data.get("tags")
+    if not isinstance(slugs, list):
+        return jsonify({"error": "tags must be a list"}), 400
+
+    port = _vendor_tags_and_custom_fields()
+    port.set_tags("booking_resource", resource_id, slugs)
+    return jsonify({"tags": port.get_tags("booking_resource", resource_id)})
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/custom-fields", methods=["GET"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_get_resource_custom_fields(resource_id):
+    """Vendor self-service: custom-field values on a resource the caller owns."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    port = _vendor_tags_and_custom_fields()
+    values = port.get_custom_fields("booking_resource", resource_id)
+    return jsonify({"custom_fields": values})
+
+
+@booking_bp.route(
+    "/api/v1/booking/vendor/resources/<resource_id>/custom-fields", methods=["PUT"]
+)
+@require_auth
+@require_user_permission("marketplace.vendor")
+def vendor_set_resource_custom_fields(resource_id):
+    """Vendor self-service: partial upsert of custom-field values (``None`` clears)."""
+    disabled = _require_marketplace_enabled()
+    if disabled:
+        return disabled
+
+    _resource, error = _load_owned_resource(resource_id)
+    if error:
+        return error
+
+    data = request.get_json() or {}
+    values = data.get("custom_fields")
+    if not isinstance(values, dict):
+        return jsonify({"error": "custom_fields must be an object"}), 400
+
+    from vbwd.services.tags_and_custom_fields import (
+        CustomFieldValidationError,
+        UnknownCustomFieldError,
+        UnknownEntityTypeError,
+    )
+
+    port = _vendor_tags_and_custom_fields()
+    try:
+        port.set_custom_fields("booking_resource", resource_id, values)
+    except (
+        CustomFieldValidationError,
+        UnknownCustomFieldError,
+        UnknownEntityTypeError,
+    ) as validation_error:
+        return jsonify({"error": str(validation_error)}), 400
+
+    updated = port.get_custom_fields("booking_resource", resource_id)
+    return jsonify({"custom_fields": updated})
 
 
 @booking_bp.route("/api/v1/admin/booking/resources", methods=["POST"])
@@ -1655,41 +1909,48 @@ def _cms_available():
         return False
 
 
-@booking_bp.route(
-    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["GET"]
-)
-@require_auth
-@require_admin
-@require_permission("booking.resources.view")
-def admin_list_resource_images(resource_id):
-    if not _cms_available():
-        return jsonify({"error": "CMS plugin required for image gallery"}), 501
-
+def _resource_image_query(resource_id):
+    """Ordered ``BookableResourceImage`` query for one resource (DRY)."""
     from plugins.booking.booking.models.resource_image import (
         BookableResourceImage,
     )
 
-    images = (
+    return (
         db.session.query(BookableResourceImage)
         .filter_by(resource_id=resource_id)
         .order_by(BookableResourceImage.sort_order)
-        .all()
     )
-    return jsonify({"images": [img.to_dict() for img in images]})
 
 
-@booking_bp.route(
-    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["POST"]
-)
-@require_auth
-@require_admin
-@require_permission("booking.resources.manage")
-def admin_upload_resource_image(resource_id):
+def _normalize_resource_image(resource_image) -> dict:
+    """Serialise to the generic gallery shape shared by shop + booking.
+
+    The fe-user gallery is generic across verticals, so every image is reduced
+    to EXACTLY ``{id, url, alt, sort_order, is_primary}`` regardless of the
+    richer keys the model's ``to_dict()`` carries.
+    """
+    data = resource_image.to_dict()
+    return {
+        "id": data["id"],
+        "url": data.get("url") or "",
+        "alt": data.get("alt") or "",
+        "sort_order": data.get("sort_order"),
+        "is_primary": data.get("is_primary"),
+    }
+
+
+def _upload_resource_image(resource_id):
+    """Upload a resource image via the CMS file-storage chain (DRY).
+
+    Returns ``(resource_image, None)`` or ``(None, error_tuple)`` (501 when the
+    CMS plugin is absent, 400 when no ``file`` field is present). Shared by the
+    admin and vendor upload routes so the storage chain never diverges.
+    """
     if not _cms_available():
-        return jsonify({"error": "CMS plugin required for image gallery"}), 501
+        return None, (jsonify({"error": "CMS plugin required for image gallery"}), 501)
 
     if "file" not in request.files:
-        return jsonify({"error": "file upload required"}), 400
+        return None, (jsonify({"error": "file upload required"}), 400)
 
     uploaded_file = request.files["file"]
     file_data = uploaded_file.read()
@@ -1711,12 +1972,7 @@ def admin_upload_resource_image(resource_id):
 
     cms_image_data = cms_service.upload_image(file_data, filename, mime_type)
 
-    # Count existing images for sort_order
-    existing_count = (
-        db.session.query(BookableResourceImage)
-        .filter_by(resource_id=resource_id)
-        .count()
-    )
+    existing_count = _resource_image_query(resource_id).count()
 
     resource_image = BookableResourceImage()
     resource_image.resource_id = resource_id
@@ -1726,6 +1982,89 @@ def admin_upload_resource_image(resource_id):
 
     db.session.add(resource_image)
     db.session.commit()
+    return resource_image, None
+
+
+def _set_resource_image_primary(resource_id, image_id):
+    """Make one image the resource's primary (DRY; admin + vendor).
+
+    Returns ``(target, None)`` or ``(None, error_tuple)`` (404 when missing).
+    """
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    db.session.query(BookableResourceImage).filter_by(resource_id=resource_id).update(
+        {"is_primary": False}
+    )
+
+    target = (
+        db.session.query(BookableResourceImage)
+        .filter_by(id=image_id, resource_id=resource_id)
+        .first()
+    )
+    if not target:
+        return None, (jsonify({"error": "Image not found"}), 404)
+
+    target.is_primary = True
+    db.session.commit()
+    return target, None
+
+
+def _delete_resource_image(resource_id, image_id):
+    """Delete an image and promote the next as primary (DRY; admin + vendor).
+
+    Returns ``None`` on success or an ``error_tuple`` (404 when missing).
+    """
+    from plugins.booking.booking.models.resource_image import (
+        BookableResourceImage,
+    )
+
+    target = (
+        db.session.query(BookableResourceImage)
+        .filter_by(id=image_id, resource_id=resource_id)
+        .first()
+    )
+    if not target:
+        return jsonify({"error": "Image not found"}), 404
+
+    was_primary = target.is_primary
+    db.session.delete(target)
+    db.session.flush()
+
+    if was_primary:
+        next_image = _resource_image_query(resource_id).first()
+        if next_image:
+            next_image.is_primary = True
+
+    db.session.commit()
+    return None
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["GET"]
+)
+@require_auth
+@require_admin
+@require_permission("booking.resources.view")
+def admin_list_resource_images(resource_id):
+    if not _cms_available():
+        return jsonify({"error": "CMS plugin required for image gallery"}), 501
+
+    images = _resource_image_query(resource_id).all()
+    return jsonify({"images": [img.to_dict() for img in images]})
+
+
+@booking_bp.route(
+    "/api/v1/admin/booking/resources/<resource_id>/images", methods=["POST"]
+)
+@require_auth
+@require_admin
+@require_permission("booking.resources.manage")
+def admin_upload_resource_image(resource_id):
+    resource_image, error = _upload_resource_image(resource_id)
+    if error:
+        return error
     return jsonify(resource_image.to_dict()), 201
 
 
@@ -1737,26 +2076,9 @@ def admin_upload_resource_image(resource_id):
 @require_admin
 @require_permission("booking.resources.manage")
 def admin_set_primary_image(resource_id, image_id):
-    from plugins.booking.booking.models.resource_image import (
-        BookableResourceImage,
-    )
-
-    # Clear all primary flags for this resource
-    db.session.query(BookableResourceImage).filter_by(resource_id=resource_id).update(
-        {"is_primary": False}
-    )
-
-    # Set the target image as primary
-    target = (
-        db.session.query(BookableResourceImage)
-        .filter_by(id=image_id, resource_id=resource_id)
-        .first()
-    )
-    if not target:
-        return jsonify({"error": "Image not found"}), 404
-
-    target.is_primary = True
-    db.session.commit()
+    target, error = _set_resource_image_primary(resource_id, image_id)
+    if error:
+        return error
     return jsonify(target.to_dict())
 
 
@@ -1793,34 +2115,9 @@ def admin_reorder_resource_images(resource_id):
 @require_admin
 @require_permission("booking.resources.manage")
 def admin_delete_resource_image(resource_id, image_id):
-    from plugins.booking.booking.models.resource_image import (
-        BookableResourceImage,
-    )
-
-    target = (
-        db.session.query(BookableResourceImage)
-        .filter_by(id=image_id, resource_id=resource_id)
-        .first()
-    )
-    if not target:
-        return jsonify({"error": "Image not found"}), 404
-
-    was_primary = target.is_primary
-    db.session.delete(target)
-    db.session.flush()
-
-    # If deleted image was primary, promote the first remaining image
-    if was_primary:
-        first = (
-            db.session.query(BookableResourceImage)
-            .filter_by(resource_id=resource_id)
-            .order_by(BookableResourceImage.sort_order)
-            .first()
-        )
-        if first:
-            first.is_primary = True
-
-    db.session.commit()
+    error = _delete_resource_image(resource_id, image_id)
+    if error:
+        return error
     return jsonify({"deleted": True})
 
 

@@ -26,6 +26,23 @@ def validate_price_display_mode(value: Optional[str]) -> Optional[str]:
     )
 
 
+# The pricing units the fe-admin ResourceForm exposes as a dropdown. The vendor
+# self-service route validates against this set so a vendor cannot store an
+# arbitrary unit the UI can never render.
+PRICE_UNITS = ("per_slot", "per_hour", "per_night", "per_seat")
+
+
+def validate_price_unit(value: str) -> str:
+    """Return ``value`` if it is a valid pricing unit, else raise ``ValueError``.
+
+    Only the enum values the ResourceForm offers are accepted; any other value
+    is rejected so a route can map it to a 400.
+    """
+    if value in PRICE_UNITS:
+        return value
+    raise ValueError(f"price_unit must be one of {PRICE_UNITS}, got {value!r}")
+
+
 booking_resource_category_link = db.Table(
     "booking_resource_category_link",
     db.Column(
