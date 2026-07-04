@@ -155,6 +155,27 @@ class BookingPlugin(BasePlugin):
 
         search_provider_registry.register(BookingResourceSearchProvider())
 
+        # Marketplace vendor-listings seam — contribute this vendor's resources
+        # to the marketplace admin "what does this user sell?" aggregation. The
+        # soft import lives HERE (the plugin wiring root, not booking source) so
+        # booking's source stays marketplace-free (test_vendor_mode_contract) AND
+        # the per-plugin isolated CI (booking without marketplace) still enables.
+        try:
+            from plugins.marketplace.marketplace.services import (
+                vendor_listings_registry as marketplace_listings_registry,
+            )
+        except ImportError:
+            marketplace_listings_registry = None
+        if marketplace_listings_registry is not None:
+            from plugins.booking.booking.marketplace_listings import (
+                BOOKING_LISTING_TYPE_ID,
+                vendor_listings_provider,
+            )
+
+            marketplace_listings_registry.register_vendor_listings_provider(
+                BOOKING_LISTING_TYPE_ID, vendor_listings_provider
+            )
+
         # S09 — register the plugin's repositories with the DI container so
         # the payment handler / completion service / consumers can resolve
         # them via `current_app.container.booking_<name>_repository()`
@@ -238,6 +259,23 @@ class BookingPlugin(BasePlugin):
         from vbwd.services.search import search_provider_registry
 
         search_provider_registry.unregister("booking_resource")
+
+        # Mirror of the on_enable registration — guarded soft import so the
+        # source stays marketplace-free and disable is safe when absent.
+        try:
+            from plugins.marketplace.marketplace.services import (
+                vendor_listings_registry as marketplace_listings_registry,
+            )
+        except ImportError:
+            marketplace_listings_registry = None
+        if marketplace_listings_registry is not None:
+            from plugins.booking.booking.marketplace_listings import (
+                BOOKING_LISTING_TYPE_ID,
+            )
+
+            marketplace_listings_registry.unregister_vendor_listings_provider(
+                BOOKING_LISTING_TYPE_ID
+            )
 
     def register_event_handlers(self, event_bus):
         import logging
