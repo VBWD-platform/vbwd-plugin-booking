@@ -37,6 +37,9 @@ from plugins.booking.booking.services.booking_invoice_service import (
 from plugins.booking.booking.services.resource_pricing_service import (
     ResourcePricingService,
 )
+from plugins.booking.booking.services.resource_copy_service import (
+    ResourceCopyService,
+)
 from plugins.booking.booking.services.plugin_config import marketplace_enabled
 from vbwd.models.tax import Tax
 
@@ -221,6 +224,10 @@ def _resource_repo() -> ResourceRepository:
 
 def _category_repo() -> ResourceCategoryRepository:
     return ResourceCategoryRepository(db.session)
+
+
+def _resource_copy_service() -> ResourceCopyService:
+    return ResourceCopyService(resource_repository=_resource_repo())
 
 
 def _schema_repo() -> CustomSchemaRepository:
@@ -1623,6 +1630,35 @@ def admin_delete_resource(resource_id):
     _resource_repo().delete(resource)
     db.session.commit()
     return jsonify({"deleted": True})
+
+
+@booking_bp.route("/api/v1/admin/booking/resources/bulk/copy", methods=["POST"])
+@require_auth
+@require_admin
+@require_permission("booking.resources.manage")
+def admin_bulk_copy_resources():
+    """Duplicate one or more resources into fresh, inactive copies.
+
+    Payload ``{"ids": [...]}``. Unknown ids are skipped (not fatal). Returns 201
+    with the created resources + a ``count``. Copy semantics live in
+    ``ResourceCopyService`` (route stays thin).
+    """
+    data = request.get_json() or {}
+    resource_ids = data.get("ids")
+    if not isinstance(resource_ids, list):
+        return jsonify({"error": "ids must be a list"}), 400
+
+    copies = _resource_copy_service().copy_resources(resource_ids)
+    db.session.commit()
+    return (
+        jsonify(
+            {
+                "resources": [resource.to_dict() for resource in copies],
+                "count": len(copies),
+            }
+        ),
+        201,
+    )
 
 
 @booking_bp.route("/api/v1/admin/booking/bookings", methods=["GET"])
