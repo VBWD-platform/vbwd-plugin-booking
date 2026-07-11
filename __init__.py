@@ -46,6 +46,8 @@ class BookingPlugin(BasePlugin):
                 "/api/v1/booking/resources": "Public bookable-resource listing for the storefront.",
                 "/api/v1/booking/resources/<slug>": "Public single bookable resource for the storefront.",
                 "/api/v1/booking/resources/<slug>/availability": "Public availability lookup for booking UI.",
+                "/api/v1/booking/filters": "Public catalogue facet descriptor for the storefront.",
+                "/api/v1/booking/tags": "Public bookable-resource tag-filter options for the storefront.",
                 "/api/v1/booking/schemas": "Public booking form schemas for the storefront.",
             },
         )

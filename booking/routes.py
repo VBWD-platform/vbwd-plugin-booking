@@ -2,9 +2,12 @@
 import os
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from typing import List, Optional
+
 from flask import Blueprint, Response, current_app, jsonify, request, g
 
 from vbwd.extensions import db
+from vbwd.utils.pagination import paginate
 from vbwd.middleware.auth import (
     require_auth,
     require_admin,
@@ -280,29 +283,207 @@ def list_categories():
     return jsonify({"categories": [category.to_dict() for category in categories]})
 
 
+# The availability facet scans real bookable slots per candidate day; cap the
+# window so a pathological range can't turn one list call into an unbounded scan.
+_MAX_AVAILABILITY_WINDOW_DAYS = 370
+
+
+def _parse_tag_slugs(raw: Optional[str]) -> Optional[List[str]]:
+    """Parse the ``tags`` query param into a slug list (AND filter) or ``None``.
+
+    Comma-separated; empty segments (``a,,b`` == ``a,b``) and surrounding
+    whitespace are ignored. Absent/empty ⇒ ``None`` (no tag filter). Same
+    semantics as shop's catalogue list (contract §1).
+    """
+    if not raw:
+        return None
+    slugs = [segment.strip() for segment in raw.split(",") if segment.strip()]
+    return slugs or None
+
+
+def _parse_availability_window(args):
+    """Parse the ``availability_from`` / ``availability_to`` date-range facet.
+
+    Returns ``((start_date, end_date), None)`` when a window is requested,
+    ``(None, None)`` when neither bound is present, or ``(None, error_response)``
+    on an invalid value (contract §1: a bad facet value is a 400). A single bound
+    means a single day; ``from > to`` and an over-long window are rejected.
+    """
+    raw_from = (args.get("availability_from") or "").strip()
+    raw_to = (args.get("availability_to") or "").strip()
+    if not raw_from and not raw_to:
+        return None, None
+    try:
+        start = date.fromisoformat(raw_from or raw_to)
+        end = date.fromisoformat(raw_to) if raw_to else start
+    except ValueError:
+        return None, (
+            jsonify(
+                {
+                    "error": "availability_from / availability_to must be "
+                    "ISO dates (YYYY-MM-DD)"
+                }
+            ),
+            400,
+        )
+    if start > end:
+        return None, (
+            jsonify(
+                {"error": "availability_from must be on or before availability_to"}
+            ),
+            400,
+        )
+    if (end - start).days > _MAX_AVAILABILITY_WINDOW_DAYS:
+        return None, (
+            jsonify(
+                {
+                    "error": "availability window may not exceed "
+                    f"{_MAX_AVAILABILITY_WINDOW_DAYS} days"
+                }
+            ),
+            400,
+        )
+    return (start, end), None
+
+
+def _filter_by_availability_window(resources, window):
+    """Keep resources with at least one bookable slot inside ``window``.
+
+    ``window`` is ``(start_date, end_date)`` inclusive. A resource matches on the
+    FIRST day in the window that yields a non-empty slot list from the real
+    ``AvailabilityService`` — which already honours the schedule, exceptions, lead
+    time, max-advance horizon, manual blocks and existing bookings — so the filter
+    is EXACT, not an approximation. Cost is bounded by the window cap above.
+    """
+    start, end = window
+    availability_service = _availability_service()
+    matched = []
+    for resource in resources:
+        current = start
+        while current <= end:
+            if availability_service.get_available_slots(resource, current):
+                matched.append(resource)
+                break
+            current += timedelta(days=1)
+    return matched
+
+
 @booking_bp.route("/api/v1/booking/resources", methods=["GET"])
 def list_resources():
-    category = request.args.get("category")
-    resource_type = request.args.get("type")
+    """Catalogue list (contract): q, type, category, tags, availability, paging.
 
+    Emits the agnostic ``{items, total, page, per_page, pages}`` envelope via the
+    core ``paginate`` helper; ``total`` reflects the effective filter. The legacy
+    ``resources`` key is DROPPED (the storefront moves to ``items``). ``type`` and
+    ``category`` are booking's mutually-exclusive facets — ``category`` wins when
+    both are given, preserving the pre-contract behaviour. The ``availability``
+    date-range facet (``availability_from`` / ``availability_to``) is computed in
+    Python (real bookable slots), so it materialises candidates and paginates
+    in-memory; the other filters paginate in SQL.
+    """
     repo = _resource_repo()
-    if category:
-        resources = repo.find_by_category(category)
-    elif resource_type:
-        resources = repo.find_by_type(resource_type)
-    else:
-        resources = repo.find_all(active_only=True)
+    page = int(request.args.get("page", 1))
+    per_page = min(int(request.args.get("per_page", 20)), 100)
+    query = (request.args.get("q") or "").strip() or None
+    category = request.args.get("category", "").strip() or None
+    resource_type = request.args.get("type", "").strip() or None
+    tag_slugs = _parse_tag_slugs(request.args.get("tags"))
 
+    window, window_error = _parse_availability_window(request.args)
+    if window_error:
+        return window_error
+
+    if window is not None:
+        candidates = repo.list_catalogue_candidates(
+            query=query,
+            category_slug=category,
+            resource_type_slug=resource_type,
+            tag_slugs=tag_slugs,
+        )
+        matched = _filter_by_availability_window(candidates, window)
+        total = len(matched)
+        start = (page - 1) * per_page
+        resources = matched[start : start + per_page]
+    else:
+        result = repo.list_catalogue(
+            page=page,
+            per_page=per_page,
+            query=query,
+            category_slug=category,
+            resource_type_slug=resource_type,
+            tag_slugs=tag_slugs,
+        )
+        resources = result["items"]
+        total = result["total"]
+
+    tags_by_id = repo.list_resource_tags([resource.id for resource in resources])
     pricing_service = ResourcePricingService(current_app.container.price_factory())
-    resource_dicts = []
+    items = []
     for resource in resources:
         resource_dict = resource.to_dict()
         resource_dict["pricing"] = pricing_service.get_resource_pricing_payload(
             resource
         )
-        resource_dicts.append(resource_dict)
+        resource_dict["tags"] = tags_by_id.get(resource.id, [])
+        items.append(resource_dict)
 
-    return jsonify({"resources": resource_dicts})
+    return jsonify(paginate(items, total, page, per_page)), 200
+
+
+@booking_bp.route("/api/v1/booking/filters", methods=["GET"])
+def list_filters():
+    """Facet descriptor (contract §4): the facets the booking catalogue offers.
+
+    Vocabulary-free at the mechanism layer — fe-core renders by ``control`` type
+    only. ``type`` options come from the schema list, ``category`` from the
+    category list, ``tags`` from the used-tags list; ``availability`` is a
+    ``date-range`` control driving the ``availability_from`` / ``availability_to``
+    params.
+    """
+    return (
+        jsonify(
+            {
+                "facets": [
+                    {
+                        "key": "type",
+                        "label": "Type",
+                        "control": "select",
+                        "options_endpoint": "/api/v1/booking/schemas",
+                    },
+                    {
+                        "key": "category",
+                        "label": "Category",
+                        "control": "select",
+                        "options_endpoint": "/api/v1/booking/categories",
+                    },
+                    {
+                        "key": "tags",
+                        "label": "Tags",
+                        "control": "chips",
+                        "multi": True,
+                        "and": True,
+                        "options_endpoint": "/api/v1/booking/tags",
+                    },
+                    {
+                        "key": "availability",
+                        "label": "Availability",
+                        "control": "date-range",
+                    },
+                ]
+            }
+        ),
+        200,
+    )
+
+
+@booking_bp.route("/api/v1/booking/tags", methods=["GET"])
+def list_resource_tag_options():
+    """Tag-filter options: tags carried by at least one ACTIVE resource.
+
+    Feeds the catalogue widget's tag chips (descriptor ``options_endpoint``), so
+    the filter never lists a tag that would match nothing.
+    """
+    return jsonify({"tags": _resource_repo().list_used_resource_tags()}), 200
 
 
 @booking_bp.route("/api/v1/booking/resources/<slug>", methods=["GET"])

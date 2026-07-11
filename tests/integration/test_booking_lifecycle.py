@@ -113,7 +113,7 @@ class TestPublicEndpoints:
     def test_list_resources(self, client, db, test_resource):
         resp = client.get("/api/v1/booking/resources")
         assert resp.status_code == 200
-        slugs = [r["slug"] for r in resp.get_json()["resources"]]
+        slugs = [r["slug"] for r in resp.get_json()["items"]]
         assert test_resource["slug"] in slugs
 
     def test_get_resource_by_slug(self, client, db, test_resource):

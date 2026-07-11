@@ -2,8 +2,9 @@
 as the detail route (integration).
 
 Contract (mirrors the shop sibling ``test_product_list_pricing``):
-- ``GET /booking/resources`` returns ``{"resources": [...]}`` where each resource
-  carries a ``pricing`` block identical in shape/values to the detail route's block
+- ``GET /booking/resources`` returns the ``{"items": [...]}`` catalogue envelope
+  (S131) where each resource carries a ``pricing`` block identical in
+  shape/values to the detail route's block
   for the same resource (net/gross + ``effective_display_mode`` +
   ``prices_display_mode``).
 - The detail route is unchanged (characterization: the block it returns equals the
@@ -45,8 +46,8 @@ def test_list_resources_each_item_has_pricing_block(db, client):
 
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
-    assert "resources" in body
-    listed = next(r for r in body["resources"] if r["slug"] == resource.slug)
+    assert "items" in body
+    listed = next(r for r in body["items"] if r["slug"] == resource.slug)
     pricing = listed["pricing"]
     assert pricing["prices_display_mode"] == "brutto"
     assert pricing["effective_display_mode"] == "brutto"
@@ -64,7 +65,7 @@ def test_list_pricing_matches_detail_block(db, client):
     assert detail_resp.status_code == 200
 
     listed = next(
-        r for r in list_resp.get_json()["resources"] if r["slug"] == resource.slug
+        r for r in list_resp.get_json()["items"] if r["slug"] == resource.slug
     )
     detail = detail_resp.get_json()
     assert listed["pricing"] == detail["pricing"]
@@ -76,7 +77,7 @@ def test_list_netto_override_surfaces_effective_netto(db, client):
     resp = client.get("/api/v1/booking/resources")
 
     assert resp.status_code == 200, resp.get_json()
-    listed = next(r for r in resp.get_json()["resources"] if r["slug"] == resource.slug)
+    listed = next(r for r in resp.get_json()["items"] if r["slug"] == resource.slug)
     pricing = listed["pricing"]
     assert pricing["prices_display_mode"] == "brutto"
     assert pricing["effective_display_mode"] == "netto"
