@@ -142,10 +142,16 @@ class BookingPlugin(BasePlugin):
 
         # S88 — contribute the booking catalog seed to ``flask reset-demo``
         # through the agnostic demo-data registry (core imports no booking model).
-        from vbwd.services.demo_data_registry import register_catalog_seeder
-        from plugins.booking.booking.demo_seed import seed_catalog
+        # The clearer purges booking_reservation (FK → core vbwd_user_invoice)
+        # before the reset clears core tables, keeping the reset FK-safe.
+        from vbwd.services.demo_data_registry import (
+            register_catalog_clearer,
+            register_catalog_seeder,
+        )
+        from plugins.booking.booking.demo_seed import clear_catalog, seed_catalog
 
         register_catalog_seeder(seed_catalog)
+        register_catalog_clearer(clear_catalog)
 
         # Cross-entity search seam — contribute bookable resources to the
         # agnostic search registry so the /search bot can find them (idempotent:

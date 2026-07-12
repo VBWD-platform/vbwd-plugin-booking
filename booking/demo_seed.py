@@ -281,6 +281,19 @@ RESOURCES = [
 ]
 
 
+def clear_catalog(session) -> None:
+    """Purge booking reservations before the demo reset clears core tables.
+
+    ``booking_reservation.invoice_id`` FKs the core ``vbwd_user_invoice`` table,
+    which ``DemoSeeder`` clears during a reset. These transactional rows must be
+    deleted first or the invoice DELETE hits a foreign-key violation. Registered
+    as a catalog clearer so it runs before core's own DELETEs. Idempotent.
+    """
+    from sqlalchemy import text
+
+    session.execute(text("DELETE FROM booking_reservation"))
+
+
 def seed_catalog(session, force=False) -> dict:
     """Seed booking schemas, categories, resources, CMS content, and email
     templates through ``session``. Idempotent.
