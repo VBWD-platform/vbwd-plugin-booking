@@ -43,7 +43,10 @@ from plugins.booking.booking.services.resource_pricing_service import (
 from plugins.booking.booking.services.resource_copy_service import (
     ResourceCopyService,
 )
-from plugins.booking.booking.services.plugin_config import marketplace_enabled
+from plugins.booking.booking.services.plugin_config import (
+    marketplace_enabled,
+    resources_indexing_enabled,
+)
 from vbwd.models.tax import Tax
 
 booking_bp = Blueprint("booking", __name__)
@@ -488,10 +491,16 @@ def list_resource_tag_options():
 
 @booking_bp.route("/api/v1/booking/resources/<slug>", methods=["GET"])
 def get_resource(slug):
+    """Public resource detail; an inactive resource is not public (404).
+
+    ``seo_indexable`` is the ``seo_index_resources`` switch (S154 D7): ``false``
+    ⇒ the frontends render the page ``noindex,follow``.
+    """
     resource = _resource_repo().find_by_slug(slug)
-    if not resource:
+    if not resource or not resource.is_active:
         return jsonify({"error": "Resource not found"}), 404
     resource_dict = resource.to_dict()
+    resource_dict["seo_indexable"] = resources_indexing_enabled()
     resource_dict["pricing"] = ResourcePricingService(
         current_app.container.price_factory()
     ).get_resource_pricing_payload(resource)
