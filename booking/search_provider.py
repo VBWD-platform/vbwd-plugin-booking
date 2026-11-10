@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import List, Optional
 
 from vbwd.services.search import SearchHit
+from plugins.booking.booking.constants import public_resource_path
 
 ENTITY_TYPE = "booking_resource"
 ENTITY_LABEL = "Booking"
-DETAIL_URL_TEMPLATE = "/booking/{slug}"
 
 
 class BookingResourceSearchProvider:
@@ -76,7 +76,7 @@ class BookingResourceSearchProvider:
             key=resource.slug,
             title=resource.name,
             snippet=self._snippet(resource.description),
-            url=DETAIL_URL_TEMPLATE.format(slug=resource.slug),
+            url=public_resource_path(resource.slug),
             price=_format_price(resource.price),
         )
 

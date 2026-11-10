@@ -1,5 +1,6 @@
 """Repository for BookableResource."""
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import or_
@@ -51,6 +52,36 @@ class ResourceRepository:
             query = query.filter(BookableResource.is_active.is_(True))
         return query.order_by(BookableResource.sort_order).all()
 
+    # ── Public visibility (single home of the catalogue rule) ─────────────
+
+    def _public_query(self):
+        """Resources the public catalogue shows: ACTIVE ones only."""
+        return self.session.query(BookableResource).filter(
+            BookableResource.is_active.is_(True)
+        )
+
+    def count_public_resources(self) -> int:
+        """How many resources the public catalogue shows (SQL ``COUNT``)."""
+        return self._public_query().count()
+
+    def list_public_resource_slugs(
+        self, offset: int, limit: int
+    ) -> List[Tuple[str, Optional[datetime]]]:
+        """One SQL page of public ``(slug, updated_at)`` rows, ordered by id.
+
+        Reads only the two columns a sitemap needs (no JSON/price columns) in a
+        stable ``ORDER BY id`` so consecutive pages never overlap or skip.
+        """
+        rows = (
+            self._public_query()
+            .with_entities(BookableResource.slug, BookableResource.updated_at)
+            .order_by(BookableResource.id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [(slug, updated_at) for slug, updated_at in rows]
+
     # ── Catalogue list (S131 — catalogue-list wire contract) ──────────────
     #
     # NOTE: the pre-contract ``find_by_type`` was removed here — it filtered on a
@@ -72,9 +103,7 @@ class ResourceRepository:
         linked custom schema's slug (the ``resource_type`` an item exposes). Tags
         are NOT filtered here — they are core-owned and resolved via the port.
         """
-        active_query = self.session.query(BookableResource).filter(
-            BookableResource.is_active.is_(True)
-        )
+        active_query = self._public_query()
         if category_slug:
             from plugins.booking.booking.models.resource_category import (
                 BookableResourceCategory,

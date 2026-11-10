@@ -28,3 +28,8 @@ def booking_config() -> Dict[str, Any]:
 def marketplace_enabled() -> bool:
     """Whether vendor-mode (self-service vendor routes + checkout stamp) is on."""
     return bool(booking_config().get("marketplace_enabled", False))
+
+
+def resources_indexing_enabled() -> bool:
+    """Whether bookable resources are indexable (sitemap) — ``seo_index_resources``."""
+    return bool(booking_config()["seo_index_resources"])

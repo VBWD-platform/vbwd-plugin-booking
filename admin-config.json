@@ -124,6 +124,18 @@
           "description": "Allow users to create recurring bookings"
         }
       ]
+    },
+    {
+      "id": "seo",
+      "label": "SEO",
+      "fields": [
+        {
+          "key": "seo_index_resources",
+          "label": "Index Bookable Resources",
+          "component": "checkbox",
+          "description": "List public bookable resources (/booking/<slug>) in the sitemap. Off = they leave the sitemap. Requires the CMS plugin."
+        }
+      ]
     }
   ]
 }

@@ -17,7 +17,30 @@ DEFAULT_CONFIG = {
     # checkout vendor-id stamp. Default OFF so a classic single-owner install
     # behaves exactly as before.
     "marketplace_enabled": False,
+    # S154 — list public bookable resources in the cms sitemap (when cms is on).
+    "seo_index_resources": True,
 }
+
+# cms's sitemap registry module. cms is an OPTIONAL dependency (S154 D3): it is
+# resolved lazily so booking enables and runs with cms absent.
+CMS_SITEMAP_REGISTRY_MODULE = "plugins.cms.src.services.seo_registry"
+
+
+def cms_sitemap_registry():
+    """cms's sitemap registry module, or ``None`` when cms is not installed."""
+    import importlib
+
+    try:
+        return importlib.import_module(CMS_SITEMAP_REGISTRY_MODULE)
+    except ImportError:
+        return None
+
+
+def _container_resource_repository():
+    """The request-scoped resource repository from the DI container."""
+    from flask import current_app
+
+    return current_app.container.booking_resource_repository()
 
 
 class BookingPlugin(BasePlugin):
@@ -117,8 +140,36 @@ class BookingPlugin(BasePlugin):
                 "[booking] Failed to register data exchangers: %s", exchanger_error
             )
 
+    def _register_sitemap_provider(self, sitemap_registry) -> None:
+        """Contribute public resources to cms's sitemap (no-op without cms).
+
+        The provider never imports cms: cms's ``SitemapEntry`` is injected here,
+        at the wiring root. Registration is idempotent by provider name.
+        """
+        if sitemap_registry is None:
+            return
+        from plugins.booking.booking.sitemap_provider import (
+            BookingResourceSitemapProvider,
+        )
+
+        self._sitemap_provider = BookingResourceSitemapProvider(
+            resource_repository_factory=_container_resource_repository,
+            entry_factory=sitemap_registry.SitemapEntry,
+        )
+        sitemap_registry.register_sitemap_provider(self._sitemap_provider)
+
+    def _unregister_sitemap_provider(self, sitemap_registry) -> None:
+        """Mirror of ``_register_sitemap_provider`` (no-op without cms)."""
+        sitemap_provider = getattr(self, "_sitemap_provider", None)
+        if sitemap_registry is None or sitemap_provider is None:
+            return
+        sitemap_registry.unregister_sitemap_provider(sitemap_provider)
+
     def on_enable(self):
         super().on_enable()
+
+        # S154 — public resources in the cms sitemap (cms optional, D3).
+        self._register_sitemap_provider(cms_sitemap_registry())
 
         from plugins.booking.booking.events import register_email_contexts
 
@@ -267,6 +318,8 @@ class BookingPlugin(BasePlugin):
         from vbwd.services.search import search_provider_registry
 
         search_provider_registry.unregister("booking_resource")
+
+        self._unregister_sitemap_provider(cms_sitemap_registry())
 
         # Mirror of the on_enable registration — guarded soft import so the
         # source stays marketplace-free and disable is safe when absent.

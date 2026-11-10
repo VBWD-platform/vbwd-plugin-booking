@@ -58,5 +58,10 @@
     "type": "boolean",
     "default": false,
     "description": "Enable vendor-mode: self-service vendor resource routes + stamp the owning vendor id on the buyer invoice line so the marketplace plugin credits the vendor"
+  },
+  "seo_index_resources": {
+    "type": "boolean",
+    "default": true,
+    "description": "List public bookable resources (/booking/<slug>) in the sitemap (requires the cms plugin)"
   }
 }
