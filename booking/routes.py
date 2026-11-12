@@ -47,6 +47,10 @@ from plugins.booking.booking.services.plugin_config import (
     marketplace_enabled,
     resources_indexing_enabled,
 )
+from plugins.booking.booking.services.seo_indexnow import (
+    notify_resource_changed,
+    notify_resources_changed,
+)
 from vbwd.models.tax import Tax
 
 booking_bp = Blueprint("booking", __name__)
@@ -1407,6 +1411,7 @@ def vendor_create_resource():
 
     _resource_repo().save(resource)
     db.session.commit()
+    notify_resource_changed(resource.slug)
     return jsonify({"resource": resource.to_dict()}), 201
 
 
@@ -1465,12 +1470,17 @@ def vendor_update_resource(resource_id):
     if error:
         return error
 
+    previous_slug = resource.slug
     data = request.get_json() or {}
     apply_error = _apply_vendor_resource_fields(resource, data)
     if apply_error:
         return apply_error
 
     db.session.commit()
+    if previous_slug and previous_slug != resource.slug:
+        notify_resources_changed([previous_slug, resource.slug])
+    else:
+        notify_resource_changed(resource.slug)
     return jsonify({"resource": resource.to_dict()})
 
 
@@ -1487,8 +1497,10 @@ def vendor_delete_resource(resource_id):
     if error:
         return error
 
+    resource_slug = resource.slug
     _resource_repo().delete(resource)
     db.session.commit()
+    notify_resource_changed(resource_slug)
     return jsonify({"success": True})
 
 
@@ -1752,6 +1764,7 @@ def admin_create_resource():
 
     _resource_repo().save(resource)
     db.session.commit()
+    notify_resource_changed(resource.slug)
     return jsonify(resource.to_dict()), 201
 
 
@@ -1764,6 +1777,7 @@ def admin_update_resource(resource_id):
     if not resource:
         return jsonify({"error": "Resource not found"}), 404
 
+    previous_slug = resource.slug
     data = request.get_json()
     updatable_fields = [
         "name",
@@ -1806,6 +1820,10 @@ def admin_update_resource(resource_id):
             return jsonify({"error": str(tax_error)}), 400
 
     db.session.commit()
+    if previous_slug and previous_slug != resource.slug:
+        notify_resources_changed([previous_slug, resource.slug])
+    else:
+        notify_resource_changed(resource.slug)
     return jsonify(resource.to_dict())
 
 
@@ -1817,8 +1835,10 @@ def admin_delete_resource(resource_id):
     resource = _resource_repo().find_by_id(resource_id)
     if not resource:
         return jsonify({"error": "Resource not found"}), 404
+    resource_slug = resource.slug
     _resource_repo().delete(resource)
     db.session.commit()
+    notify_resource_changed(resource_slug)
     return jsonify({"deleted": True})
 
 
